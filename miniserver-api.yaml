@@ -1,0 +1,3003 @@
+openapi: 3.1.0
+info:
+  title: Loxone MiniServer API
+  description: |
+    The Loxone MiniServer exposes its smart home controls via a **WebSocket**
+    connection and mirrored **HTTP GET** endpoints. Both transports share the
+    same command path syntax.
+
+    ## Transport
+
+    ### WebSocket (preferred)
+    Connect to `ws://{host}/ws/rfc6455` and send plain-text commands as
+    WebSocket text frames.  The server pushes state-update events back over
+    the same connection.
+
+    ### HTTP (alternative)
+    Any command can also be sent as `GET http://{host}/{command}`.
+
+    ## Authentication flow
+
+    1. `GET /jdev/cfg/api` — discover API version and key-exchange algorithm
+    2. `GET /jdev/cfg/getPublicKey` — fetch RSA public key
+    3. Hash password → `GET /jdev/sys/gettoken/{hash}/{user}/{permission}/{clientId}/{clientName}`
+    4. On subsequent connects: `GET /jdev/sys/authwithtoken/{token}/{user}`
+    5. Refresh before expiry: `GET /jdev/sys/refreshtoken/{token}/{user}`
+    6. Kill session: `GET /jdev/sys/killtoken/{token}/{user}`
+
+    ## Control commands
+    Control commands follow the pattern:
+
+    ```
+    jdev/sps/io/{uuid}/{command}
+    jdev/sps/io/{uuid}/{command}/{value}
+    ```
+
+    where `{uuid}` is the control's UUID from the structure file
+    (`GET /data/LoxAPP3.json`).
+
+    ## State update events (WebSocket push)
+    State changes are pushed as binary or text frames:
+    ```
+    {stateUuid}:{value}
+    ```
+    The `stateUuid` maps to a state variable defined in the structure file
+    for each control.
+
+    ## Structure file
+    `GET /data/LoxAPP3.json` returns the full Miniserver structure: all rooms,
+    categories, controls, and their state-variable UUIDs.  Parse this once to
+    map control UUIDs and state UUIDs.
+
+    ## Control types (`type` field in structure file)
+    | Type string | Description |
+    |-------------|-------------|
+    | `InfoOnlyAnalog` | Read-only analog sensor value (most common type) |
+    | `InfoOnlyDigital` | Read-only digital sensor (on/off with custom labels) |
+    | `Switch` | Simple on/off switch |
+    | `Pushbutton` | Momentary pushbutton |
+    | `TextState` | Read-only text + icon state display |
+    | `Meter` | Energy / consumption meter (actual + totals) |
+    | `Dimmer` | Dimmable light output |
+    | `LightController` | Light scene controller (legacy) |
+    | `LightControllerV2` | Enhanced light scene controller with moods |
+    | `CentralLightController` | Centralized light group controller |
+    | `ColorPicker` | RGB color picker |
+    | `ColorPickerV2` | Enhanced color picker (HSV + Lumitech tunable white) |
+    | `Jalousie` | Blinds / shades / shutters |
+    | `CentralJalousie` | Centralized blinds group controller |
+    | `Gate` | Gate / barrier |
+    | `GarageDoor` | Garage door |
+    | `DoorLock` | Door lock |
+    | `CarGate` | Car gate |
+    | `WindowMonitor` | Window open/closed/tilted state monitor |
+    | `IRoomController` | Room climate controller (heating, legacy) |
+    | `IRoomControllerV2` | Enhanced room climate (heating + cooling + ventilation) |
+    | `IRoomControllerV2021` | Latest room climate controller |
+    | `ClimateController` | HVAC climate controller |
+    | `ClimateControllerUS` | US-style HVAC climate controller |
+    | `Ventilation` | Ventilation / air quality controller |
+    | `Alarm` | Security alarm system |
+    | `SmokeAlarm` | Smoke detector alarm |
+    | `AalSmartAlarm` | AAL smart alarm |
+    | `AalEmergency` | AAL emergency button |
+    | `Intercom` | Intercom / video doorbell |
+    | `NfcCodeTouch` | NFC/code access panel |
+    | `TimedSwitch` | Timed switch with countdown |
+    | `UpDownDigital` | Up/down digital control |
+    | `TimedPulse` | Timed pulse output |
+    | `Counter` | Event counter |
+    | `Hourcounter` | Operating hour counter with maintenance interval |
+    | `AlarmClock` | Scheduled alarm clock with wake profiles |
+    | `Daytimer` | Day/week schedule timer (analog or digital) |
+    | `ValueSelector` | Bounded analog value selector with step |
+    | `Slider` | Analog value slider |
+    | `Radio` | Multi-output selector (one-of-N or all-off) |
+    | `PresenceDetector` | Presence / motion sensor with lock and timeout |
+    | `Tracker` | GPS / asset tracker with entry log |
+    | `EnergyManager` | Energy management |
+    | `EnergyManager2` | Enhanced energy manager |
+    | `EFM` | Energy flow meter (multi-node: grid, generation, storage) |
+    | `LoadManager` | Power load manager with priority control |
+    | `Fronius` | Fronius inverter integration |
+    | `SolarPumpController` | Solar pump control |
+    | `PoolController` | Pool/spa automation |
+    | `Sauna` | Sauna control |
+    | `AudioZone` | Audio zone (legacy) |
+    | `AudioZoneV2` | Audio zone v2 (multiroom, linked to AudioServer) |
+    | `CentralAudioZone` | Centralized audio zone group controller |
+    | `SystemScheme` | Floor plan / system scheme visualization |
+    | `Webpage` | Embedded webpage widget |
+    | `ePaper` | E-paper display |
+    | `CarCharger` | EV charger |
+    | `CentralAlarm` | Central alarm group |
+    | `CentralGate` | Central gate group |
+    | `CentralLock` | Central lock group |
+    | `CentralPushButton` | Central pushbutton |
+    | `CentralWindow` | Central window group |
+
+  version: "1.0.0"
+  contact:
+    name: Loxone
+
+servers:
+  - url: http://{host}
+    description: Loxone MiniServer
+    variables:
+      host:
+        default: "192.168.1.77"
+        description: MiniServer IP or hostname
+
+tags:
+  - name: Authentication
+    description: Token-based authentication flow
+  - name: Structure
+    description: Fetch the full Miniserver structure and config
+  - name: System
+    description: System information and management
+  - name: Blinds (Jalousie)
+    description: Blind / shade / shutter control
+  - name: Lights
+    description: Light controller (scenes, dimmers, RGB)
+  - name: Climate
+    description: Room climate and HVAC control
+  - name: Switches
+    description: Switches, pushbuttons, timed outputs
+  - name: Access & Security
+    description: Doors, gates, locks, alarms, intercoms
+  - name: Energy
+    description: Energy management and metering
+  - name: Sensors
+    description: Presence, motion, analog and digital inputs
+  - name: Audio
+    description: Multiroom audio zones (MiniServer side)
+  - name: Users
+    description: User management
+  - name: Calendar
+    description: Calendar entries for scheduling controls
+  - name: Statistics
+    description: Historical statistics
+  - name: App Pairing
+    description: Mobile app pairing management
+  - name: Push Notifications
+    description: Push notification service (PNS)
+  - name: Configuration
+    description: MiniServer network and system configuration
+
+paths:
+
+  # ─── Structure ──────────────────────────────────────────────────────────────
+
+  /data/LoxAPP3.json:
+    get:
+      tags: [Structure]
+      summary: Get full Miniserver structure
+      description: |
+        Returns the complete structure file describing all rooms, categories,
+        controls, and their state variable UUIDs. Parse this once to resolve
+        UUIDs before sending commands.
+      responses:
+        "200":
+          description: Structure file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructureFile'
+
+  /jdev/cfg/api:
+    get:
+      tags: [Authentication, Structure]
+      summary: Get API version and key-exchange info
+      responses:
+        "200":
+          description: API info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiInfo'
+
+  /jdev/cfg/getPublicKey:
+    get:
+      tags: [Authentication]
+      summary: Get RSA public key for credential encryption
+      responses:
+        "200":
+          description: RSA public key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeyResponse'
+
+  # ─── Authentication ──────────────────────────────────────────────────────────
+
+  /jdev/sys/gettoken/{hash}/{user}/{permission}/{clientId}/{clientName}:
+    get:
+      tags: [Authentication]
+      summary: Obtain an auth token
+      description: |
+        `hash` = HMAC-SHA1( SHA1(password) + ":" + user, sessionKey ).
+        `permission` = 2 (web) or 4 (app).
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema: { type: string }
+          description: HMAC-SHA1 credential hash
+        - name: user
+          in: path
+          required: true
+          schema: { type: string }
+        - name: permission
+          in: path
+          required: true
+          schema: { type: integer, enum: [2, 4] }
+          description: "2=web, 4=app"
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Unique client identifier (UUID)
+        - name: clientName
+          in: path
+          required: true
+          schema: { type: string }
+          description: Human-readable client name
+      responses:
+        "200":
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+
+  /jdev/sys/authwithtoken/{token}/{user}:
+    get:
+      tags: [Authentication]
+      summary: Authenticate with an existing token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+        - name: user
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Auth result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sys/refreshtoken/{token}/{user}:
+    get:
+      tags: [Authentication]
+      summary: Refresh a token before expiry
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+        - name: user
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Refreshed token info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+
+  /jdev/sys/killtoken/{token}/{user}:
+    get:
+      tags: [Authentication]
+      summary: Invalidate (kill) a token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+        - name: user
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Token killed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sys/keyexchange/{sessionKey}:
+    get:
+      tags: [Authentication]
+      summary: Exchange session key (WebSocket only)
+      description: Sent as the first command over the WebSocket connection after connecting.
+      parameters:
+        - name: sessionKey
+          in: path
+          required: true
+          schema: { type: string }
+          description: AES session key, RSA-encrypted and Base64-encoded
+      responses:
+        "200":
+          description: Session established
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── System ──────────────────────────────────────────────────────────────────
+
+  /jdev/sys/getminiserverinfo:
+    get:
+      tags: [System]
+      summary: Get MiniServer hardware and firmware info
+      responses:
+        "200":
+          description: MiniServer info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sys/check:
+    get:
+      tags: [System]
+      summary: Health check / keepalive ping
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sys/enc/{command}:
+    get:
+      tags: [System]
+      summary: Send an encrypted command
+      parameters:
+        - name: command
+          in: path
+          required: true
+          schema: { type: string }
+          description: AES-encrypted command, Base64-encoded
+      responses:
+        "200":
+          description: Decrypted command result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sys/fenc/{command}:
+    get:
+      tags: [System]
+      summary: Send a full encrypted command (AES + HMAC)
+      parameters:
+        - name: command
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Command result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── Blinds / Jalousie ───────────────────────────────────────────────────────
+
+  /jdev/sps/io/{uuid}/Up:
+    get:
+      tags: [Blinds (Jalousie)]
+      summary: Move blind up (tilt open)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/Down:
+    get:
+      tags: [Blinds (Jalousie)]
+      summary: Move blind down (tilt closed)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/Stop:
+    get:
+      tags: [Blinds (Jalousie)]
+      summary: Stop movement
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/FullUp:
+    get:
+      tags: [Blinds (Jalousie)]
+      summary: Move fully open (100 %)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/FullDown:
+    get:
+      tags: [Blinds (Jalousie)]
+      summary: Move fully closed (0 %)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/Auto:
+    get:
+      tags: [Blinds (Jalousie)]
+      summary: Enable automatic shading mode
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/shade/{position}:
+    get:
+      tags: [Blinds (Jalousie)]
+      summary: Set position and slat angle
+      description: |
+        `position` encodes both blind position and slat angle as a composite
+        value. Position 0 = fully open, 1 = fully closed.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: position
+          in: path
+          required: true
+          schema: { type: number, minimum: 0, maximum: 1 }
+          description: "Target position 0.0–1.0 (0 = open, 1 = closed)"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # ─── Lights ──────────────────────────────────────────────────────────────────
+
+  /jdev/sps/io/{uuid}/On:
+    get:
+      tags: [Lights, Switches]
+      summary: Turn on (lights, switches, etc.)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/Off:
+    get:
+      tags: [Lights, Switches]
+      summary: Turn off
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/plus:
+    get:
+      tags: [Lights]
+      summary: Increase brightness / next mood
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/minus:
+    get:
+      tags: [Lights]
+      summary: Decrease brightness / previous mood
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setBrightness/{value}:
+    get:
+      tags: [Lights]
+      summary: Set dimmer brightness (Dimmer control)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 100 }
+          description: Brightness 0–100 %
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setMoodToId/{moodId}:
+    get:
+      tags: [Lights]
+      summary: Activate a light scene / mood (LightControllerV2)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: moodId
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Mood / scene ID from the structure file
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/addMood/{moodId}:
+    get:
+      tags: [Lights]
+      summary: Add a mood to the current mix (LightControllerV2)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: moodId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/removeMood/{moodId}:
+    get:
+      tags: [Lights]
+      summary: Remove a mood from the current mix (LightControllerV2)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: moodId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setSaturation/{value}:
+    get:
+      tags: [Lights]
+      summary: Set color saturation (ColorPicker)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/color/{hsv}:
+    get:
+      tags: [Lights]
+      summary: Set RGB color (ColorPicker / ColorPickerV2)
+      description: |
+        HSV color encoded as `hsv(hue,saturation,value)` or Lumitech
+        `lxt(colorTemp,brightness)`.
+
+        Examples:
+        - `hsv(120,100,80)` — green at 80 % brightness
+        - `lxt(3000,50)` — warm white at 50 % brightness
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: hsv
+          in: path
+          required: true
+          schema: { type: string }
+          description: "HSV string: `hsv(h,s,v)` or Lumitech: `lxt(ct,bri)`"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setFavoriteColor/{index}:
+    get:
+      tags: [Lights]
+      summary: Recall a saved favorite color (ColorPickerV2)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: index
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/learn:
+    get:
+      tags: [Lights]
+      summary: Trigger scene learn / save current state
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # ─── Climate ─────────────────────────────────────────────────────────────────
+
+  /jdev/sps/io/{uuid}/setOperatingMode/{mode}:
+    get:
+      tags: [Climate]
+      summary: Set room operating mode (IRoomController)
+      description: |
+        | Value | Mode |
+        |-------|------|
+        | 0 | Auto (economy/comfort by schedule) |
+        | 1 | Automatic heating only |
+        | 2 | Automatic cooling only |
+        | 3 | Manual heating |
+        | 4 | Manual cooling |
+        | 5 | Off |
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: mode
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 5 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setComfortTemperature/{value}:
+    get:
+      tags: [Climate]
+      summary: Set comfort temperature (heating setpoint)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema: { type: number }
+          description: Temperature in °C (or °F depending on MiniServer config)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setComfortTemperatureCool/{value}:
+    get:
+      tags: [Climate]
+      summary: Set comfort temperature (cooling setpoint)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema: { type: number }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setEcoTemperatureMin/{value}:
+    get:
+      tags: [Climate]
+      summary: Set eco minimum temperature (heating)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema: { type: number }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setEcoTemperatureMax/{value}:
+    get:
+      tags: [Climate]
+      summary: Set eco maximum temperature (cooling)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema: { type: number }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/override/{mode}/{duration}:
+    get:
+      tags: [Climate]
+      summary: Override operating mode for a duration
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: mode
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: duration
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Duration in seconds
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # ─── Switches ────────────────────────────────────────────────────────────────
+
+  /jdev/sps/io/{uuid}/pulse:
+    get:
+      tags: [Switches]
+      summary: Send a momentary pulse (Pushbutton / TimedPulse)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/pulse/{durationMs}:
+    get:
+      tags: [Switches]
+      summary: Send a timed pulse with explicit duration
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: durationMs
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Pulse duration in milliseconds
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/on/{durationMs}:
+    get:
+      tags: [Switches]
+      summary: Turn on for a timed duration (TimedSwitch)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: durationMs
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/reset:
+    get:
+      tags: [Switches]
+      summary: Reset counter to zero (Counter control)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/set/{value}:
+    get:
+      tags: [Switches]
+      summary: Set an analog value (Counter, Slider, AnalogInput)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema: { type: number }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # ─── Access & Security ───────────────────────────────────────────────────────
+
+  /jdev/sps/io/{uuid}/open:
+    get:
+      tags: [Access & Security]
+      summary: Open gate / door / garage
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/close:
+    get:
+      tags: [Access & Security]
+      summary: Close gate / door / garage
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/lock:
+    get:
+      tags: [Access & Security]
+      summary: Lock a door (DoorLock)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/unlock:
+    get:
+      tags: [Access & Security]
+      summary: Unlock a door (DoorLock)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/arm:
+    get:
+      tags: [Access & Security]
+      summary: Arm alarm system
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/disarm/{code}:
+    get:
+      tags: [Access & Security]
+      summary: Disarm alarm system with code
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+          description: Disarm code (PIN)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/delayedOn/{delaySeconds}:
+    get:
+      tags: [Access & Security]
+      summary: Arm with exit delay
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: delaySeconds
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/acknowledge:
+    get:
+      tags: [Access & Security]
+      summary: Acknowledge / silence active alarm
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # ─── Users ───────────────────────────────────────────────────────────────────
+
+  /jdev/sps/getuserlist:
+    get:
+      tags: [Users]
+      summary: Get list of all users
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/getuserlist2:
+    get:
+      tags: [Users]
+      summary: Get extended user list
+      responses:
+        "200":
+          description: Extended user list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/getuser/{username}:
+    get:
+      tags: [Users]
+      summary: Get a single user's details
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/createuser/{username}:
+    get:
+      tags: [Users]
+      summary: Create a new user
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/deleteuser/{username}:
+    get:
+      tags: [Users]
+      summary: Delete a user
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/addedituser/{config}:
+    get:
+      tags: [Users]
+      summary: Add or edit a user (URL-encoded JSON config)
+      parameters:
+        - name: config
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/addusernfc/{uuid}/{nfcTag}/{permission}:
+    get:
+      tags: [Users]
+      summary: Assign NFC tag to user
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string }
+        - name: nfcTag
+          in: path
+          required: true
+          schema: { type: string }
+        - name: permission
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: NFC tag assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/checkuserid/{userId}:
+    get:
+      tags: [Users]
+      summary: Check if a user ID exists
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/getusersettings:
+    get:
+      tags: [Users]
+      summary: Get current user's settings
+      responses:
+        "200":
+          description: User settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── Calendar ────────────────────────────────────────────────────────────────
+
+  /jdev/sps/calendargetentries:
+    get:
+      tags: [Calendar]
+      summary: Get all calendar entries
+      responses:
+        "200":
+          description: Calendar entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/calendarcreateentry/{calendarUuid}/{start}/{end}/{value}:
+    get:
+      tags: [Calendar]
+      summary: Create a calendar entry
+      parameters:
+        - name: calendarUuid
+          in: path
+          required: true
+          schema: { type: string }
+        - name: start
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Start timestamp (Unix seconds)
+        - name: end
+          in: path
+          required: true
+          schema: { type: integer }
+          description: End timestamp (Unix seconds)
+        - name: value
+          in: path
+          required: true
+          schema: { type: string }
+          description: Operating mode or value to set
+      responses:
+        "200":
+          description: Entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/calendardeleteentry/{entryId}:
+    get:
+      tags: [Calendar]
+      summary: Delete a calendar entry
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Entry deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/calendarupdateentry/{entryId}/{calendarUuid}/{start}/{end}/{value}:
+    get:
+      tags: [Calendar]
+      summary: Update a calendar entry
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: calendarUuid
+          in: path
+          required: true
+          schema: { type: string }
+        - name: start
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: end
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: value
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Entry updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/calendargetcoolperiod:
+    get:
+      tags: [Calendar]
+      summary: Get cooling period configuration
+      responses:
+        "200":
+          description: Cool period
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/calendargetheatperiod:
+    get:
+      tags: [Calendar]
+      summary: Get heating period configuration
+      responses:
+        "200":
+          description: Heat period
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── Statistics ──────────────────────────────────────────────────────────────
+
+  /jdev/sps/getStatistic/{uuid}/{statType}/{from}/{to}/{resolution}/{format}/{timezone}:
+    get:
+      tags: [Statistics]
+      summary: Fetch historical statistics for a control
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema: { type: string }
+          description: Control or state UUID
+        - name: statType
+          in: path
+          required: true
+          schema: { type: string }
+        - name: from
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Start timestamp (Unix seconds)
+        - name: to
+          in: path
+          required: true
+          schema: { type: integer }
+          description: End timestamp (Unix seconds)
+        - name: resolution
+          in: path
+          required: true
+          schema: { type: string }
+          description: "e.g. 15m, 1h, 1d"
+        - name: format
+          in: path
+          required: true
+          schema: { type: string }
+        - name: timezone
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Statistics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/getstatsdate:
+    get:
+      tags: [Statistics]
+      summary: Get statistics availability date range
+      responses:
+        "200":
+          description: Date range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── App Pairing ─────────────────────────────────────────────────────────────
+
+  /jdev/sps/apppairing/list:
+    get:
+      tags: [App Pairing]
+      summary: List paired apps
+      responses:
+        "200":
+          description: Paired app list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/apppairing/create/{clientId}:
+    get:
+      tags: [App Pairing]
+      summary: Create a new pairing entry
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pairing created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/apppairing/remove/{clientId}:
+    get:
+      tags: [App Pairing]
+      summary: Remove a pairing entry
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pairing removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/apppairing/identify/{clientId}/{confirm}:
+    get:
+      tags: [App Pairing]
+      summary: Confirm pairing via physical button
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: confirm
+          in: path
+          required: true
+          schema: { type: integer, enum: [0, 1] }
+      responses:
+        "200":
+          description: Pairing confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/apppairing/unpair/{clientId}:
+    get:
+      tags: [App Pairing]
+      summary: Unpair an app
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Unpaired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── Push Notifications ──────────────────────────────────────────────────────
+
+  /jdev/pns/register/v1/{token}/{deviceId}:
+    get:
+      tags: [Push Notifications]
+      summary: Register device for push notifications
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/pns/unregister/v1/{token}:
+    get:
+      tags: [Push Notifications]
+      summary: Unregister device from push notifications
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Unregistered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/pns/checkregistration/v1/{token}:
+    get:
+      tags: [Push Notifications]
+      summary: Check push notification registration status
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Registration status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/pns/settings/v1/{token}:
+    get:
+      tags: [Push Notifications]
+      summary: Get push notification settings
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: PNS settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/pns/readMessage/v1/{messageId}:
+    get:
+      tags: [Push Notifications]
+      summary: Mark a push notification as read
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Message marked read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── Configuration ───────────────────────────────────────────────────────────
+
+  /jdev/cfg/version:
+    get:
+      tags: [Configuration]
+      summary: Get firmware version
+      responses:
+        "200":
+          description: Version info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/cfg/ip:
+    get:
+      tags: [Configuration]
+      summary: Get current IP address
+      responses:
+        "200":
+          description: IP address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/cfg/mac:
+    get:
+      tags: [Configuration]
+      summary: Get MAC address
+      responses:
+        "200":
+          description: MAC address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/cfg/ntp:
+    get:
+      tags: [Configuration]
+      summary: Get NTP server configuration
+      responses:
+        "200":
+          description: NTP config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/cfg/timezoneoffset:
+    get:
+      tags: [Configuration]
+      summary: Get timezone offset
+      responses:
+        "200":
+          description: Timezone offset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/cfg/updatelevel:
+    get:
+      tags: [Configuration]
+      summary: Get firmware update channel level
+      responses:
+        "200":
+          description: Update level
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/getcatlist:
+    get:
+      tags: [Configuration]
+      summary: Get category list
+      responses:
+        "200":
+          description: Category list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/getroomlist:
+    get:
+      tags: [Configuration]
+      summary: Get room list
+      responses:
+        "200":
+          description: Room list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/geticonlist:
+    get:
+      tags: [Configuration]
+      summary: Get available icon list
+      responses:
+        "200":
+          description: Icon list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/getgrouplist:
+    get:
+      tags: [Configuration]
+      summary: Get group list
+      responses:
+        "200":
+          description: Group list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/listcmds:
+    get:
+      tags: [Configuration]
+      summary: List available SPS commands
+      responses:
+        "200":
+          description: Command list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/io/{uuid}/gethistory:
+    get:
+      tags: [Statistics]
+      summary: Get control value history
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: History
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/io/{uuid}/controlnotes:
+    get:
+      tags: [Configuration]
+      summary: Get notes for a control
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Control notes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  /jdev/sps/io/{uuid}/securedDetails:
+    get:
+      tags: [Configuration]
+      summary: Get secured (password-protected) control details
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Secured details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MiniserverResponse'
+
+  # ─── Audio ───────────────────────────────────────────────────────────────────
+  # Applies to AudioZoneV2 and CentralAudioZone controls.
+  # The MiniServer side relays these commands to the connected Loxone Music Server
+  # (AudioServer). State is pushed back via WebSocket: power, volume, playState,
+  # clientState, serverState, bluetooth, presence, defaultVolume, etc.
+
+  /jdev/sps/io/{uuid}/play:
+    get:
+      tags: [Audio]
+      summary: Play / resume playback
+      description: >
+        Resumes playback on the audio zone. If the zone is powered off the
+        Music Server is woken first.  Applies to `AudioZoneV2`.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/pause:
+    get:
+      tags: [Audio]
+      summary: Pause playback
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/next:
+    get:
+      tags: [Audio]
+      summary: Skip to next track in the queue
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/prev:
+    get:
+      tags: [Audio]
+      summary: Skip to previous track in the queue
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/on:
+    get:
+      tags: [Audio]
+      summary: Wake audio zone (client on)
+      description: >
+        Powers on the audio zone client. If the Music Server is offline it is
+        started first (`svpower/on`).
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/off:
+    get:
+      tags: [Audio]
+      summary: Turn audio zone off (client off)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/svpower/on:
+    get:
+      tags: [Audio]
+      summary: Power on the Music Server
+      description: Starts the Loxone Music Server (AudioServer) associated with this zone.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/svpower/off:
+    get:
+      tags: [Audio]
+      summary: Power off the Music Server
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/volume/{value}:
+    get:
+      tags: [Audio]
+      summary: Set volume to an absolute level (0 – 100)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: value
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+          description: Target volume level (0 = mute, 100 = maximum)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/volUp:
+    get:
+      tags: [Audio]
+      summary: Volume step up
+      description: Increases volume by the configured `volumeStep` value (AudioZoneV2).
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/volDown:
+    get:
+      tags: [Audio]
+      summary: Volume step down
+      description: Decreases volume by the configured `volumeStep` value (AudioZoneV2).
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/volstep/{n}:
+    get:
+      tags: [Audio]
+      summary: Volume step by N
+      description: >
+        Adjusts volume by `n` steps. Positive value increases, negative decreases
+        (e.g. `volstep/5` or `volstep/-5`).
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: "n"
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Step amount (positive = up, negative = down)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/shuffle/{enabled}:
+    get:
+      tags: [Audio]
+      summary: Enable or disable shuffle
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: enabled
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: "1 = shuffle on, 0 = shuffle off"
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/tts/{text}:
+    get:
+      tags: [Audio]
+      summary: Play text-to-speech announcement
+      description: Speaks the given text on the audio zone. URL-encode the text string.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: text
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded text to speak (e.g. `Hello%20World`)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/playZoneFav/{id}:
+    get:
+      tags: [Audio]
+      summary: Play a zone favourite by slot ID
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Favourite slot index (1-based)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/presence/on:
+    get:
+      tags: [Audio]
+      summary: Enable presence-triggered zone wake
+      description: >
+        When enabled the zone wakes automatically when presence is detected
+        in the assigned room (`AudioZoneV2` feature).
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/presence/off:
+    get:
+      tags: [Audio]
+      summary: Disable presence-triggered zone wake
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/enableairplay/{enabled}:
+    get:
+      tags: [Audio]
+      summary: Enable or disable AirPlay on this zone
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: enabled
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: "1 = AirPlay on, 0 = AirPlay off"
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/enablespotifyconnect/{enabled}:
+    get:
+      tags: [Audio]
+      summary: Enable or disable Spotify Connect on this zone
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: enabled
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: "1 = Spotify Connect on, 0 = Spotify Connect off"
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/bluetooth/{enabled}:
+    get:
+      tags: [Audio]
+      summary: Enable or disable Bluetooth on this zone
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: enabled
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: "1 = Bluetooth on, 0 = Bluetooth off"
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/resetbluetoothpairings:
+    get:
+      tags: [Audio]
+      summary: Reset all Bluetooth pairings on this zone
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # Central audio zone (CentralAudioZone) ──────────────────────────────────────
+
+  /jdev/sps/io/{uuid}/volup:
+    get:
+      tags: [Audio]
+      summary: Master volume up (CentralAudioZone)
+      description: Steps up the master volume for all zones in a `CentralAudioZone` group.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/voldown:
+    get:
+      tags: [Audio]
+      summary: Master volume down (CentralAudioZone)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # ─── Energy ──────────────────────────────────────────────────────────────────
+  # Meter and EFM (Energy Flow Monitor) controls are read-only state containers.
+  # Their current values (actual power/flow, daily/weekly/monthly/yearly totals)
+  # are delivered as WebSocket state-update pushes after sending
+  # `jdev/sps/enablebinstatusupdate`.  No write commands exist for Meter / EFM.
+  #
+  # EnergyManager and EnergyManager2 controls support the commands below.
+  # Managed-load sub-UUIDs are listed in the control's `details.loads` array
+  # in the structure file.
+
+  /jdev/sps/io/{uuid}/trigger/{priority}:
+    get:
+      tags: [Energy]
+      summary: Trigger load management (EnergyManager)
+      description: >
+        Manually triggers the load-management cycle with the given priority.
+        Use `0` to release a manual trigger.  Applies to `EnergyManager` controls.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: priority
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Priority level (0 = release)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/turnOn/{loadId}:
+    get:
+      tags: [Energy]
+      summary: Force a managed load on (EnergyManager)
+      description: >
+        Forces managed load `loadId` on, overriding automatic scheduling.
+        Applies to `EnergyManager` controls.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: loadId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Load index
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/turnOff/{loadId}:
+    get:
+      tags: [Energy]
+      summary: Force a managed load off (EnergyManager)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: loadId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Load index
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/{loadUUID}/activate:
+    get:
+      tags: [Energy]
+      summary: Activate a managed load (EnergyManager2)
+      description: >
+        Forces the load identified by `loadUUID` into the active (on) state,
+        overriding automatic scheduling.  Applies to `EnergyManager2` controls.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: loadUUID
+          in: path
+          required: true
+          schema:
+            type: string
+          description: UUID of the managed load (from `details.loads` in the structure file)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/{loadUUID}/deactivate:
+    get:
+      tags: [Energy]
+      summary: Deactivate a managed load (EnergyManager2)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: loadUUID
+          in: path
+          required: true
+          schema:
+            type: string
+          description: UUID of the managed load
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/{loadUUID}/automatic:
+    get:
+      tags: [Energy]
+      summary: Return a managed load to automatic scheduling (EnergyManager2)
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: loadUUID
+          in: path
+          required: true
+          schema:
+            type: string
+          description: UUID of the managed load
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/setMinSoc/{percent}:
+    get:
+      tags: [Energy]
+      summary: Set minimum battery state-of-charge (EnergyManager2)
+      description: >
+        Sets the minimum allowed state-of-charge for the battery storage node.
+        Applies to `EnergyManager2` controls.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: percent
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+          description: Minimum SoC in percent
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  # ─── Sensors ─────────────────────────────────────────────────────────────────
+  # InfoOnlyAnalog and InfoOnlyDigital controls are purely read-only.
+  # Their current state (value / active flag) is delivered via WebSocket
+  # state-update pushes after sending `jdev/sps/enablebinstatusupdate`.
+  # No write commands exist for those control types.
+  #
+  # PresenceDetector supports the commands below for activating / overriding
+  # the detection state.
+
+  /jdev/sps/io/{uuid}/presence/{active}:
+    get:
+      tags: [Sensors]
+      summary: Set PresenceDetector active state
+      description: >
+        Manually sets the presence-detection state.
+        `1` marks presence as active; `0` marks it as inactive.
+        Applies to `PresenceDetector` controls.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: active
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: "1 = presence active, 0 = presence inactive"
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/deactivate/{seconds}:
+    get:
+      tags: [Sensors]
+      summary: Disable PresenceDetector for N seconds
+      description: >
+        Temporarily disables the presence detector for `seconds` seconds
+        (e.g. while cleaning to avoid unwanted triggering).
+        Pass `0` to cancel an active disable override.
+        Applies to `PresenceDetector` controls.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: seconds
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+          description: Disable duration in seconds (0 = cancel override)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+components:
+
+  parameters:
+    uuid:
+      name: uuid
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "12ab34cd-ef56-7890-abcd-ef1234567890"
+      description: Control UUID from the structure file (`/data/LoxAPP3.json`)
+
+  schemas:
+
+    MiniserverResponse:
+      type: object
+      description: Standard MiniServer JSON response envelope
+      properties:
+        LL:
+          type: object
+          properties:
+            control:
+              type: string
+              description: The command that was executed
+            value:
+              description: Response payload (string, number, or nested object)
+            Code:
+              type: string
+              description: HTTP-like status code ("200" = success)
+
+    IoResponse:
+      type: object
+      description: Response from a control I/O command
+      properties:
+        LL:
+          type: object
+          properties:
+            control:
+              type: string
+              example: "jdev/sps/io/12ab34cd-ef56-7890-abcd-ef1234567890/On"
+            value:
+              type: string
+              description: Acknowledged value (often "1" or "0")
+            Code:
+              type: string
+              example: "200"
+
+    ApiInfo:
+      type: object
+      properties:
+        LL:
+          type: object
+          properties:
+            control:
+              type: string
+            value:
+              type: object
+              properties:
+                version:
+                  type: string
+                  example: "12.3.4.5"
+                snr:
+                  type: string
+                  description: MiniServer serial number
+                name:
+                  type: string
+                  description: MiniServer name
+                httpsStatus:
+                  type: integer
+                  description: "HTTPS status: 0=off, 1=no cert, 2=self-signed, 3=valid cert"
+            Code:
+              type: string
+
+    PublicKeyResponse:
+      type: object
+      properties:
+        LL:
+          type: object
+          properties:
+            control:
+              type: string
+            value:
+              type: string
+              description: PEM-encoded RSA public key
+            Code:
+              type: string
+
+    TokenResponse:
+      type: object
+      properties:
+        LL:
+          type: object
+          properties:
+            control:
+              type: string
+            value:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Auth token string
+                key:
+                  type: string
+                  description: AES session key
+                validUntil:
+                  type: integer
+                  description: Token expiry (Unix timestamp)
+                tokenRights:
+                  type: integer
+                  description: Bitmask of granted permissions
+                unsecurePassword:
+                  type: boolean
+            Code:
+              type: string
+
+    StructureFile:
+      type: object
+      description: Full MiniServer structure (LoxAPP3.json)
+      properties:
+        lastModified:
+          type: string
+          description: "Timestamp of last config change, format: `YYYY-MM-DD HH:MM:SS`"
+          example: "2024-03-15 10:22:47"
+        msInfo:
+          $ref: '#/components/schemas/MsInfo'
+        globalStates:
+          $ref: '#/components/schemas/GlobalStates'
+        operatingModes:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Map of operating mode ID → display name.
+            Positive IDs 0–11 are system-defined (weekdays, holiday, heat/cool period).
+            Negative IDs are user-defined custom modes (e.g. -1=Alarm, -5=Party, -6=Away).
+          example:
+            "0": "Holiday"
+            "3": "Monday"
+            "10": "Heat period"
+            "-1": "Alarm"
+            "-6": "Away"
+        modes:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/OperatingMode'
+          description: Same operating modes as `operatingModes`, keyed by mode UUID instead of numeric ID
+        rooms:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Room'
+          description: Map of roomUuid → Room
+        cats:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Category'
+          description: Map of catUuid → Category
+        controls:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Control'
+          description: Map of controlUuid → Control
+        weatherServer:
+          $ref: '#/components/schemas/WeatherServer'
+        times:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TimeEntry'
+          description: Map of time zone ID → time zone definition
+        mailer:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/MailerEntry'
+          description: Map of UUID → email notification configuration
+        mediaServer:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Control'
+          description: Map of UUID → media server control (AudioZoneV2 preset source)
+        autopilot:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/AutopilotEntry'
+          description: Map of UUID → autopilot control (tracks rule changes)
+        messageCenter:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/MessageCenterEntry'
+          description: Map of UUID → message center control (system notifications)
+        partnerInfo:
+          $ref: '#/components/schemas/PartnerInfo'
+
+    MsInfo:
+      type: object
+      description: MiniServer identity, location, and regional settings
+      properties:
+        serialNr:
+          type: string
+          description: MiniServer serial number
+        msName:
+          type: string
+          description: MiniServer display name
+        projectName:
+          type: string
+          description: Project / installation name
+        localUrl:
+          type: string
+          description: LAN IP address of the MiniServer
+        remoteUrl:
+          type: string
+          description: Cloud / remote access hostname
+        hostname:
+          type: string
+          description: Short hostname (same as or derived from localUrl)
+        tempUnit:
+          type: integer
+          enum: [0, 1]
+          description: "0 = Celsius, 1 = Fahrenheit"
+        currency:
+          type: string
+          description: Local currency symbol (e.g. "€", "$")
+        squareMeasure:
+          type: string
+          description: Area unit (e.g. "m²", "ft²")
+        location:
+          type: string
+          description: Free-text location / address string
+        latitude:
+          type: number
+          description: Geographic latitude in decimal degrees
+        longitude:
+          type: number
+          description: Geographic longitude in decimal degrees
+        altitude:
+          type: integer
+          description: Altitude above sea level in metres (used for sunrise/sunset calc)
+        languageCode:
+          type: string
+          description: ISO 639-2 language code (e.g. "DEU", "ENG")
+        heatPeriodStart:
+          type: string
+          description: "Start of heating period, format MM-DD (e.g. \"09-20\")"
+        heatPeriodEnd:
+          type: string
+          description: "End of heating period, format MM-DD (e.g. \"04-30\")"
+        coolPeriodStart:
+          type: string
+          description: "Start of cooling period, format MM-DD (e.g. \"05-01\")"
+        coolPeriodEnd:
+          type: string
+          description: "End of cooling period, format MM-DD (e.g. \"09-19\")"
+        catTitle:
+          type: string
+          description: Custom label for the category concept (default "Category")
+        roomTitle:
+          type: string
+          description: Custom label for the room concept (default "Room")
+        miniserverType:
+          type: integer
+          description: "MiniServer hardware generation: 0=Gen1, 1=Go, 2=Gen2, 3=Gen2 Go"
+        deviceMonitor:
+          type: string
+          description: UUID of the device monitor control (if configured)
+        currentUser:
+          $ref: '#/components/schemas/CurrentUser'
+
+    Room:
+      type: object
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+          description: Icon path relative to the MiniServer icon set (e.g. "IconsFilled/location-pin.svg")
+        defaultRating:
+          type: integer
+          description: Sort order / priority (higher = more prominent)
+        isFavorite:
+          type: boolean
+        default:
+          type: boolean
+          description: True for the built-in "Unassigned" catch-all room
+        type:
+          type: integer
+        color:
+          type: string
+          description: "Accent color as hex string (e.g. \"#8DFF70\")"
+
+    Category:
+      type: object
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+          description: Icon path relative to the MiniServer icon set (e.g. "IconsFilled/binders.svg")
+        defaultRating:
+          type: integer
+          description: Sort order / priority (higher = more prominent)
+        isFavorite:
+          type: boolean
+        default:
+          type: boolean
+          description: True for the built-in "Unassigned" catch-all category
+        type:
+          type: string
+          description: "Category function type: \"undefined\", \"lights\", \"shading\", \"climate\", \"media\", \"entrance\", \"device\", \"home\""
+        color:
+          type: string
+          description: "Accent color as hex string (e.g. \"#8DFF70\")"
+
+    Control:
+      type: object
+      description: A single smart home control
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          description: Control type string (e.g. "Jalousie", "LightControllerV2", "InfoOnlyAnalog")
+        uuidAction:
+          type: string
+          description: UUID to use for sending commands (may differ from the object key UUID)
+        room:
+          type: string
+          description: Room UUID
+        cat:
+          type: string
+          description: Category UUID
+        defaultRating:
+          type: integer
+          description: Sort priority (higher = more prominent in UI)
+        isFavorite:
+          type: boolean
+        isSecured:
+          type: boolean
+          description: Whether commands require a PIN/password confirmation
+        restrictions:
+          type: integer
+          description: Bitmask of user-right restrictions on this control
+        details:
+          type: object
+          additionalProperties: true
+          description: |
+            Type-specific static configuration. Common fields by type:
+
+            **InfoOnlyAnalog**: `format` (printf-style, e.g. "%.1f °C")
+            **InfoOnlyDigital**: `text.on`, `text.off`, `color.on`, `color.off`
+            **Meter**: `type` ("unidirectional"/"bidirectional"), `actualFormat`, `totalFormat`, `powerName`, `displayType`
+            **Dimmer**: `jLockable`
+            **LightControllerV2**: `jLockable`, `masterValue` (subcontrol UUID), `masterColor` (subcontrol UUID), `controlHistory`
+            **ColorPickerV2**: `pickerType` ("Rgb"/"Lumitech"/"RGB+Lumitech"), `TWMin`, `TWMax`
+            **Jalousie**: `jLockable`, `isAutomatic`, `animation`, `type`
+            **IRoomControllerV2**: `timerModes`, `format`, `connectedInputs`, `possibleCapabilities`, `singleComfortTemperature`, `sources`, `linkedAcControls`
+            **Ventilation**: `modes`, `timerProfiles`, `type`, `hasPresence`, `hasIndoorHumidity`, `hasAirQuality`, `hasHeatExchanger`
+            **AlarmClock**: `hasNightLight`, `wakeAlarmSounds`, `snoozeDurationConnected`
+            **Daytimer**: `analog` (true = analog output, false = digital), `format`
+            **ValueSelector**: `min`, `max`, `step`, `format`, `increaseOnly`
+            **Slider**: `min`, `max`, `step`, `format`
+            **Radio**: `allOff` (label for "all off" state), `outputs` (map of output index → name)
+            **AudioZoneV2**: `server` (media server UUID), `playerid`, `clientType`, `speakerConfig`, `volumeModes`
+            **EFM**: `actualFormat`, `totalFormat`, `storageFormat`, `nodes`, `rest`, `restMeter`, `restName`
+            **LoadManager**: `loads`, `mode`
+            **WindowMonitor**: `windows`
+            **SystemScheme**: `imagePath`, `imageVersion`, `schemeSize`, `controlReferences`
+            **Intercom**: `deviceType`, `videoInfo`, `audioInfo`, `outputs`, `lastBellEventImages`
+        states:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Map of state name → state UUID.
+            Subscribe to state UUIDs over WebSocket to receive real-time value updates.
+            State UUIDs pushed over the wire use the raw UUID (no "U:" prefix).
+
+            **InfoOnlyAnalog**: `value`
+            **InfoOnlyDigital**: `active`
+            **TextState**: `textAndIcon`, `iconAndColor`
+            **Meter**: `jLocked`, `actual`, `total`, `totalDay`, `totalWeek`, `totalMonth`, `totalYear`
+            **Switch**: `jLocked`, `active`, `lockedOn`
+            **Pushbutton**: `jLocked`, `active`
+            **Dimmer**: `jLocked`, `position`, `min`, `max`, `step`
+            **ColorPickerV2**: `color`, `sequence`, `sequenceColorIdx`
+            **LightControllerV2**: `jLocked`, `activeMoods`, `moodList`, `activeMoodsNum`, `favoriteMoods`, `additionalMoods`, `circuitNames`, `daylightConfig`, `presence`
+            **Jalousie**: `jLocked`, `up`, `down`, `position`, `shadePosition`, `safetyActive`, `autoAllowed`, `autoActive`, `locked`, `infoText`, `autoInfoText`, `autoState`, `deviceState`, `targetPosition`, `targetPositionLamelle`, `adjustingEndPos`
+            **Gate**: `jLocked`, `position`, `active`, `preventOpen`, `preventClose`
+            **IRoomControllerV2**: `jLocked`, `tempActual`, `tempTarget`, `comfortTemperature`, `comfortTemperatureCool`, `comfortTolerance`, `absentMinOffset`, `absentMaxOffset`, `frostProtectTemperature`, `heatProtectTemperature`, `shadingCoolTemp`, `shadingHeatTemp`, `co2`, `humidityActual`, `actualOutdoorTemp`, `currentMode`, `shadingOut`, `active`, `activeMode`, `comfortTemperatureOffset`, `overrideEntries`, `prepareState`, `useOutdoor`, `operatingMode`, `overrideReason`, `excessEnergyTempOffset`, `averageOutdoorTemp`, `temperatureBoundaryInfo`, `capabilities`, `fan`, `ventMode`, `co2Target`, `airDeviceState`, `openWindow`
+            **ClimateControllerUS**: `jLocked`, `mode`, `controls`, `currentStatus`, `serviceMode`, `fanTimerUntil`, `modeTimerUntil`, `emergencyTimerUntil`, `demandCool`, `demandHeat`, `stage`, `minimumTempCooling`, `maximumTempHeating`, `actualOutdoorTemp`, `fan`, `emergencyOverride`, `humidity`, `threshold`, `excessEnergy`, `outdoorTempInfo`, `nextMaintenance`, `outdoorTempMode`
+            **Ventilation**: `jLocked`, `ventReason`, `speed`, `absenceMax`, `absenceMin`, `presenceMax`, `presenceMin`, `humidityIndoor`, `humidityMax`, `airQualityMax`, `airQualityIndoor`, `stoppedBy`, `controlInfo`, `activeTimerProfile`, `presence`, `overwriteUntil`, `mode`, `temperatureIndoor`, `temperatureOutdoor`, `temperatureTarget`, `temperatureSupport`, `frostTemp`, `activeMode`, `heatExchanger`
+            **Alarm**: `jLocked`, `armed`, `nextLevel`, `nextLevelDelay`, `nextLevelDelayTotal`, `level`, `startTime`, `armedAt`, `nextLevelAt`, `armedDelay`, `armedDelayTotal`, `sensors`, `disabledMove`, `events`
+            **Intercom**: `jLocked`, `bell`, `lastBellEvents`, `lastBellTimestamp`
+            **Daytimer**: `jLocked`, `mode`, `override`, `value`, `needsActivation`, `modeList`, `entriesAndDefaultValue`, `resetActive`
+            **AlarmClock**: `jLocked`, `isEnabled`, `isAlarmActive`, `confirmationNeeded`, `entryList`, `currentEntry`, `nextEntry`, `nextEntryMode`, `ringingTime`, `ringDuration`, `prepareDuration`, `snoozeTime`, `snoozeDuration`, `nextEntryTime`, `deviceState`, `deviceSettings`, `wakeAlarmSoundSettings`
+            **ValueSelector**: `jLocked`, `min`, `max`, `step`, `value`
+            **Slider**: `value`, `error`
+            **Radio**: `jLocked`, `activeOutput`
+            **PresenceDetector**: `jLocked`, `active`, `locked`, `events`, `time`, `activeSince`, `infoText`, `lockedUntil`, `activeUntil`
+            **Tracker**: `entries`
+            **Hourcounter**: `total`, `remaining`, `lastActivation`, `overdue`, `maintenanceInterval`, `stateUnit`, `totalTime`, `active`, `overdueSince`
+            **AudioZoneV2**: `jLocked`, `power`, `volume`, `defaultVolume`, `alarmVolume`, `bellVolume`, `buzzerVolume`, `ttsVolume`, `maxVolume`, `volumeStep`, `isLocked`, `bluetooth`, `serverState`, `clientState`, `playState`, `presence`
+            **CentralLightController / CentralJalousie / CentralAudioZone**: `jLocked`, `events`
+            **CentralJalousie** (extra): `safetyActive`
+            **WindowMonitor**: `numOpen`, `numClosed`, `numTilted`, `numOffline`, `numLocked`, `numUnlocked`, `windowStates`
+            **EFM**: `jLocked`, `Ppwr`, `Gpwr`, `Spwr`, `Pre`, `Pri`, `CO2`, `selfConsumption`, `actual0`, `actual1`
+            **LoadManager**: `jLocked`, `currentPower`, `peakOverloadPower`, `maxPower`, `maxTp`, `maxPowerExceeded`, `availablePower`, `lockedLoads`, `statusLoads`
+        subControls:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Control'
+          description: |
+            Child controls (e.g. individual circuit dimmers or color pickers within a LightControllerV2).
+            Keys are composite UUIDs in the form `{parentUuid}/{slotName}`.
+
+    GlobalStates:
+      type: object
+      description: |
+        System-wide state UUIDs. Each value is a state UUID that can be subscribed
+        to over WebSocket for real-time updates.
+      properties:
+        operatingMode:
+          type: string
+          description: Current global operating mode (maps to an ID in `operatingModes`)
+        sunrise:
+          type: string
+          description: Today's sunrise time as Unix timestamp (seconds since midnight)
+        sunset:
+          type: string
+          description: Today's sunset time as Unix timestamp (seconds since midnight)
+        pastTasks:
+          type: string
+          description: Recently executed autopilot / calendar tasks
+        plannedTasks:
+          type: string
+          description: Upcoming scheduled autopilot / calendar tasks
+        notifications:
+          type: string
+          description: Pending system notifications count
+        modifications:
+          type: string
+          description: Config modification counter (increments on each change)
+        miniserverTime:
+          type: string
+          description: Current MiniServer Unix timestamp (wall clock)
+        favColorSequences:
+          type: string
+          description: Saved favorite color sequences for ColorPickerV2
+        favColors:
+          type: string
+          description: Saved favorite single colors for ColorPickerV2
+        liveSearch:
+          type: string
+          description: Live search state
+        userSettings:
+          type: string
+          description: Per-user UI settings blob
+        userSettingsTs:
+          type: string
+          description: Timestamp of last user settings change
+        cloudservice:
+          type: string
+          description: Cloud service connectivity status
+        trustVersion:
+          type: string
+          description: Trust/certificate version counter
+        propsVersion:
+          type: string
+          description: System properties version counter
+        hasInternet:
+          type: string
+          description: Internet connectivity flag (1 = online, 0 = offline)
+
+    CurrentUser:
+      type: object
+      description: |
+        Identity of the authenticated user. Values are server-side template
+        placeholders resolved at login time (not literal strings).
+      properties:
+        name:
+          type: string
+          description: "Username (template: $$username)"
+        uuid:
+          type: string
+          description: "User UUID (template: $$useruuid)"
+        isAdmin:
+          type: string
+          description: "\"1\" if the user has admin rights (template: $$isAdmin)"
+        changePassword:
+          type: string
+          description: "\"1\" if the user must change their password (template: $$changePwd)"
+        userRights:
+          type: string
+          description: "Bitmask of granted user rights (template: $$userRights)"
+
+    OperatingMode:
+      type: object
+      description: An operating mode entry (from the `modes` map, keyed by UUID)
+      properties:
+        id:
+          type: integer
+          description: |
+            Numeric mode ID (same key used in `operatingModes`).
+            0–11 are system-defined. Positive IDs:
+            0=Holiday, 1=Vacation, 2=Day off, 3=Monday … 9=Sunday,
+            10=Heat period, 11=Cool period.
+            Negative IDs are user-defined custom modes.
+        name:
+          type: string
+          description: Display name of the mode
+
+    WeatherServer:
+      type: object
+      description: Weather integration metadata and state UUIDs
+      properties:
+        states:
+          type: object
+          description: State UUIDs for weather data
+          properties:
+            actual:
+              type: string
+              description: UUID of the current weather state
+            forecast:
+              type: string
+              description: UUID of the weather forecast state
+        format:
+          type: object
+          description: Printf-style display format strings for weather values
+          properties:
+            relativeHumidity:
+              type: string
+              example: "%.0f%%"
+            temperature:
+              type: string
+              example: "%.1f°"
+            windSpeed:
+              type: string
+              example: "%.0fkm/h"
+            precipitation:
+              type: string
+              example: "%.1fl/m²/h"
+            barometricPressure:
+              type: string
+              example: "%.0fhPa"
+        weatherTypeTexts:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Map of weather type ID → display name.
+            IDs correspond to standard weather condition codes
+            (e.g. 1=clear, 2=fair, 3=cloudy, 4=overcast, 5=covered, …)
+        weatherFieldTypes:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/WeatherFieldType'
+          description: Map of field ID → weather field type definition
+
+    WeatherFieldType:
+      type: object
+      description: Definition of a single weather data field
+      properties:
+        id:
+          type: integer
+          description: |
+            Field ID. Known IDs:
+            1=Temperature, 2=Dew point, 3=Relative humidity, 4=Wind speed,
+            5=Wind direction, 6=Wind gust, 7=Wind gust direction, 8=UV index,
+            9=Precipitation, 10=Precipitation probability, 11=Barometric pressure,
+            26=Perceived temperature
+        analog:
+          type: boolean
+          description: True for numeric (analog) fields, false for discrete/enum fields
+        unit:
+          type: string
+          description: Physical unit string (e.g. "°C", "km/h", "hPa")
+        format:
+          type: string
+          description: Printf-style display format (e.g. "%.1f", "%.0f%%")
+
+    TimeEntry:
+      type: object
+      description: Time zone definition entry
+      properties:
+        id:
+          type: integer
+          description: Numeric time zone ID
+        name:
+          type: string
+          description: IANA time zone name (e.g. "Europe/Rome")
+        analog:
+          type: boolean
+          description: Whether this entry represents an analog (offset-based) zone
+
+    MailerEntry:
+      type: object
+      description: Email notification configuration entry
+      properties:
+        id:
+          type: string
+          description: Mailer UUID
+        name:
+          type: string
+          description: Display name of this mailer configuration
+        eMailAddress:
+          type: string
+          description: Target email address
+
+    AutopilotEntry:
+      type: object
+      description: Autopilot rule engine control
+      properties:
+        name:
+          type: string
+        uuidAction:
+          type: string
+        states:
+          type: object
+          properties:
+            changed:
+              type: string
+              description: State UUID updated when any autopilot rule fires
+            history:
+              type: string
+              description: State UUID holding the recent rule execution history
+
+    MessageCenterEntry:
+      type: object
+      description: Message center / system notification control
+      properties:
+        name:
+          type: string
+        uuidAction:
+          type: string
+        states:
+          type: object
+          properties:
+            changed:
+              type: string
+              description: State UUID updated whenever a new system message arrives
+
+    PartnerInfo:
+      type: object
+      description: Installer / integrator contact information embedded in the structure file
+      properties:
+        name:
+          type: string
+          description: Installer or company name
+        details:
+          type: object
+          description: Additional contact details (phone, email, website, etc.)

@@ -1,0 +1,2021 @@
+openapi: 3.1.0
+info:
+  title: Loxone AudioServer – Admin API
+  description: |
+    Internal REST API used by the AudioServer's web-based Admin UI.
+
+    ## Authentication
+    Cookie-based session via `POST /admin/api/auth/login`.
+    The session cookie `lox_admin_session` must be present on all
+    non-public endpoints. Sessions expire after **12 hours**.
+
+    ## Errors
+    All errors follow:
+    ```json
+    { "error": "error-code", "message": "optional description" }
+    ```
+
+    | Code | HTTP Status | Meaning |
+    |------|-------------|---------|
+    | `auth-required` | 401 | Not logged in |
+    | `forbidden` | 403 | Insufficient rights |
+    | `not-found` | 404 | Resource not found |
+    | `invalid-payload` | 400 | Bad request body |
+    | `conflict` | 409 | State conflict |
+    | `in-progress` | 409 | Operation already running |
+    | `unavailable` | 503 | Upstream service unavailable |
+    | `internal-error` | 500 | Unexpected server error |
+
+    ## CORS
+    All origins are allowed. Supported methods: `GET POST PUT PATCH DELETE`.
+
+  version: "1.0.0"
+
+servers:
+  - url: http://{host}:{port}
+    description: AudioServer Admin API
+    variables:
+      host:
+        default: "192.168.1.78"
+      port:
+        default: "7091"
+
+tags:
+  - name: Auth
+    description: Login, logout, session info
+  - name: Info
+    description: Server information and status
+  - name: Zones
+    description: Zone state inspection and bulk operations
+  - name: Transports
+    description: Output transport discovery (AirPlay, Snapcast, Sonos, …)
+  - name: Snapcast
+    description: Snapcast client management
+  - name: Spotify
+    description: Spotify Connect and account management
+  - name: Apple Music
+    description: Apple Music (Widevine) setup
+  - name: Line In
+    description: Line-in bridge management
+  - name: Library
+    description: Local media library management
+  - name: Radio
+    description: Custom radio station management
+  - name: Logs
+    description: Log access and level control
+  - name: Config
+    description: Server configuration
+  - name: Alerts
+    description: Alert sound file management
+  - name: Groups
+    description: Zone group management
+  - name: Updates
+    description: Admin UI and component update management
+
+paths:
+
+  # ─── Auth ───────────────────────────────────────────────────────────────────
+
+  /admin/api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Logged in — sets `lox_admin_session` cookie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        "400":
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Miniserver not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "502":
+          description: Miniserver unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current session info
+      security: []
+      responses:
+        "200":
+          description: Session info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out
+      security: []
+      responses:
+        "204":
+          description: Logged out — session cookie cleared
+
+  # ─── Info ───────────────────────────────────────────────────────────────────
+
+  /admin/api/info:
+    get:
+      tags: [Info]
+      summary: Get server info (public)
+      security: []
+      responses:
+        "200":
+          description: Server info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerInfo'
+
+  # ─── Zones ──────────────────────────────────────────────────────────────────
+
+  /admin/api/zones/states:
+    get:
+      tags: [Zones]
+      summary: Get all zone states with technical details
+      responses:
+        "200":
+          description: Zone states
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZoneStatesResponse'
+
+  /admin/api/zones/state-controllers:
+    get:
+      tags: [Zones]
+      summary: List available state controller implementations
+      responses:
+        "200":
+          description: State controllers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stateControllers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NamedItem'
+
+  /admin/api/zones/{zoneId}/favorites/purge:
+    post:
+      tags: [Zones]
+      summary: Purge favorites for a single zone
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: Purged
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/zones/{zoneId}/favorites/copy:
+    post:
+      tags: [Zones]
+      summary: Copy favorites from this zone to another
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetZoneId]
+              properties:
+                targetZoneId:
+                  type: integer
+      responses:
+        "200":
+          description: Copied
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/zones/{zoneId}/recents/purge:
+    post:
+      tags: [Zones]
+      summary: Purge recently played for a single zone
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: Purged
+
+  /admin/api/zones/favorites/purge:
+    post:
+      tags: [Zones]
+      summary: Purge favorites for all zones
+      responses:
+        "200":
+          description: All zone favorites purged
+
+  /admin/api/zones/recents/purge:
+    post:
+      tags: [Zones]
+      summary: Purge recently played for all zones
+      responses:
+        "200":
+          description: All zone recents purged
+
+  /admin/api/groups:
+    get:
+      tags: [Groups]
+      summary: Get all zone groups
+      responses:
+        "200":
+          description: Groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ZoneGroup'
+
+  # ─── Transports ─────────────────────────────────────────────────────────────
+
+  /admin/api/transports:
+    get:
+      tags: [Transports]
+      summary: List available transport types with their config fields
+      responses:
+        "200":
+          description: Transport types
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransportsResponse'
+
+  /admin/api/transports/airplay/devices:
+    get:
+      tags: [Transports]
+      summary: Discover AirPlay devices on the network
+      responses:
+        "200":
+          description: AirPlay device list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/googlecast/devices:
+    get:
+      tags: [Transports]
+      summary: Discover Google Cast devices
+      responses:
+        "200":
+          description: Google Cast device list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/dlna/devices:
+    get:
+      tags: [Transports]
+      summary: Discover DLNA / UPnP devices
+      responses:
+        "200":
+          description: DLNA device list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/sonos/devices:
+    get:
+      tags: [Transports]
+      summary: Discover Sonos speakers
+      responses:
+        "200":
+          description: Sonos device list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/musicassistant/devices:
+    get:
+      tags: [Transports]
+      summary: Discover Music Assistant players
+      responses:
+        "200":
+          description: Music Assistant player list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/musicassistant/status:
+    get:
+      tags: [Transports]
+      summary: Get Music Assistant connection status
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /admin/api/transports/snapcast/clients:
+    get:
+      tags: [Transports, Snapcast]
+      summary: List Snapcast clients
+      responses:
+        "200":
+          description: Snapcast client list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/squeezelite/clients:
+    get:
+      tags: [Transports]
+      summary: List Squeezelite clients
+      responses:
+        "200":
+          description: Squeezelite client list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/sendspin/clients:
+    get:
+      tags: [Transports]
+      summary: List Sendspin clients
+      responses:
+        "200":
+          description: Sendspin client list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/sendspin/mdns-clients:
+    get:
+      tags: [Transports]
+      summary: List Sendspin clients discovered via mDNS
+      responses:
+        "200":
+          description: Sendspin mDNS client list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/sendspin/sources:
+    get:
+      tags: [Transports]
+      summary: List Sendspin audio sources
+      responses:
+        "200":
+          description: Sendspin source list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/spotify/devices:
+    get:
+      tags: [Transports, Spotify]
+      summary: List Spotify Connect devices
+      responses:
+        "200":
+          description: Spotify Connect device list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceListResponse'
+
+  /admin/api/transports/ping:
+    post:
+      tags: [Transports]
+      summary: Ping a host:port for reachability check
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, port]
+              properties:
+                host:
+                  type: string
+                  example: "192.168.1.10"
+                port:
+                  type: integer
+                  example: 1704
+      responses:
+        "200":
+          description: Ping result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reachable:
+                    type: boolean
+                  latencyMs:
+                    type: number
+
+  # ─── Snapcast ────────────────────────────────────────────────────────────────
+
+  /admin/api/snapcast/clients/{clientId}/stream:
+    post:
+      tags: [Snapcast]
+      summary: Assign a Snapcast client to a stream
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [streamId]
+              properties:
+                streamId:
+                  type: string
+      responses:
+        "200":
+          description: Client reassigned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clientId:
+                    type: string
+                  streamId:
+                    type: string
+
+  # ─── Spotify ─────────────────────────────────────────────────────────────────
+
+  /admin/api/spotify/auth/callback:
+    get:
+      tags: [Spotify]
+      summary: OAuth callback URL for Spotify authorization (public)
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to admin UI after OAuth flow
+
+  /admin/api/spotify/accounts/link:
+    get:
+      tags: [Spotify]
+      summary: Get Spotify OAuth authorization URL
+      responses:
+        "200":
+          description: Authorization URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authUrl:
+                    type: string
+
+  /admin/api/spotify/accounts/{accountId}:
+    delete:
+      tags: [Spotify]
+      summary: Remove a linked Spotify account
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/spotify/librespot/status:
+    get:
+      tags: [Spotify]
+      summary: Get librespot daemon status
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /admin/api/spotify/librespot/credentials:
+    get:
+      tags: [Spotify]
+      summary: Get stored librespot credentials (public)
+      security: []
+      responses:
+        "200":
+          description: Credentials (partial)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /admin/api/spotify/librespot/oauth:
+    post:
+      tags: [Spotify]
+      summary: Authenticate librespot via username/password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Auth result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /admin/api/spotify/bridges:
+    post:
+      tags: [Spotify]
+      summary: Add a Spotify bridge (additional account)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, username, password]
+              properties:
+                name:
+                  type: string
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Bridge added
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /admin/api/spotify/bridges/{bridgeId}:
+    delete:
+      tags: [Spotify]
+      summary: Remove a Spotify bridge
+      parameters:
+        - name: bridgeId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ─── Apple Music ─────────────────────────────────────────────────────────────
+
+  /admin/api/applemusic/auth:
+    get:
+      tags: [Apple Music]
+      summary: Get Apple Music auth status
+      responses:
+        "200":
+          description: Auth status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /admin/api/applemusic/widevine/status:
+    get:
+      tags: [Apple Music]
+      summary: Get Widevine credential status
+      responses:
+        "200":
+          description: Widevine status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hasPrivateKey:
+                    type: boolean
+                  hasClientId:
+                    type: boolean
+
+  /admin/api/applemusic/widevine/private-key:
+    put:
+      tags: [Apple Music]
+      summary: Upload Widevine private key (binary, max 256 KB)
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Private key stored
+
+  /admin/api/applemusic/widevine/client-id:
+    put:
+      tags: [Apple Music]
+      summary: Upload Widevine client ID blob (binary, max 10 MB)
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Client ID stored
+
+  # ─── Line In ─────────────────────────────────────────────────────────────────
+
+  /api/linein:
+    get:
+      tags: [Line In]
+      summary: List configured line-in inputs
+      responses:
+        "200":
+          description: Line-in list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lineins:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LineInEntry'
+
+  /api/linein/bridges:
+    get:
+      tags: [Line In]
+      summary: List registered line-in bridges
+      responses:
+        "200":
+          description: Bridge list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bridges:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LineInBridge'
+
+  /api/linein/bridges/register:
+    post:
+      tags: [Line In]
+      summary: Register a new line-in bridge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineInBridgeRegistration'
+      responses:
+        "200":
+          description: Bridge registered + ingest config returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineInBridgeConfig'
+
+  /api/linein/bridges/{bridgeId}:
+    delete:
+      tags: [Line In]
+      summary: Remove a line-in bridge
+      parameters:
+        - name: bridgeId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Removed
+        "409":
+          description: Bridge is currently assigned to an active input
+
+  /api/linein/bridges/{bridgeId}/status:
+    post:
+      tags: [Line In]
+      summary: Update bridge operational status
+      parameters:
+        - name: bridgeId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineInBridgeStatus'
+      responses:
+        "200":
+          description: Status accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineInBridgeConfig'
+
+  /api/linein/{lineinId}/ingest:
+    get:
+      tags: [Line In]
+      summary: Get ingest connection details for a line-in input
+      parameters:
+        - name: lineinId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Ingest config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineInIngestConfig'
+
+  /api/linein/{lineinId}/bridge-status:
+    get:
+      tags: [Line In]
+      summary: Get bridge assignment status for a line-in input
+      parameters:
+        - name: lineinId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Bridge status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineInBridgeStatusResponse'
+
+  # ─── Streams ─────────────────────────────────────────────────────────────────
+
+  /streams/{zone}/{streamId}.{format}:
+    get:
+      tags: [Zones]
+      summary: Get zone audio stream
+      security: []
+      parameters:
+        - name: zone
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: streamId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Stream ID or `current`
+        - name: format
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [mp3, wav, pcm, aac, flac]
+        - name: sync
+          in: query
+          schema: { type: string }
+          description: Sync group ID for synchronized playback
+        - name: expect
+          in: query
+          schema: { type: integer }
+          description: Expected client count for sync group
+        - name: icy
+          in: query
+          schema: { type: string, enum: ["1", "true"] }
+          description: Force ICY metadata headers
+        - name: prime
+          in: query
+          schema: { type: string, enum: ["0", "false"] }
+          description: Disable stream priming
+      responses:
+        "200":
+          description: Audio stream (chunked)
+          content:
+            audio/mpeg:
+              schema: { type: string, format: binary }
+            audio/wav:
+              schema: { type: string, format: binary }
+            audio/aac:
+              schema: { type: string, format: binary }
+            audio/flac:
+              schema: { type: string, format: binary }
+
+  /streams/{zone}/{streamId}/cover:
+    get:
+      tags: [Zones]
+      summary: Get current track cover art for a zone
+      security: []
+      parameters:
+        - name: zone
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: streamId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cover image
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+
+  /streams/proxy:
+    get:
+      tags: [Zones]
+      summary: Proxy an external audio / playlist URL (localhost only)
+      description: |
+        Proxies requests to external audio or playlist URLs. Rewrites M3U and
+        PLS playlists to route sub-URLs through the same proxy. Restricted to
+        local clients (`127.0.0.1`, `::1`, or LAN).
+      security: []
+      parameters:
+        - name: u
+          in: query
+          required: true
+          schema: { type: string }
+          description: Target URL to proxy
+        - name: h
+          in: query
+          schema: { type: string }
+          description: URL-encoded extra request headers
+      responses:
+        "200":
+          description: Proxied audio stream or playlist
+
+  # ─── Library ─────────────────────────────────────────────────────────────────
+
+  /admin/api/content/library/status:
+    get:
+      tags: [Library]
+      summary: Get library index status
+      responses:
+        "200":
+          description: Library status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryStatus'
+
+  /admin/api/content/library/rescan:
+    post:
+      tags: [Library]
+      summary: Trigger a full library rescan
+      responses:
+        "200":
+          description: Rescan started
+        "409":
+          description: Scan already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/content/library/upload:
+    post:
+      tags: [Library]
+      summary: Upload audio files (multipart, max 32 MB)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResult'
+
+  /admin/api/content/library/covers:
+    get:
+      tags: [Library]
+      summary: List library cover art entries
+      parameters:
+        - name: start
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Cover list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /admin/api/content/library/tracks:
+    delete:
+      tags: [Library]
+      summary: Delete tracks by ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                trackIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Deleted
+
+  /admin/api/content/library/albums:
+    delete:
+      tags: [Library]
+      summary: Delete albums by ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                albumIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Deleted
+
+  /admin/api/content/library/artists:
+    delete:
+      tags: [Library]
+      summary: Delete artists by ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                artistIds:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Deleted
+
+  /admin/api/content/library/storages:
+    get:
+      tags: [Library]
+      summary: List network storage locations
+      responses:
+        "200":
+          description: Storage list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  storages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StorageEntry'
+    post:
+      tags: [Library]
+      summary: Add a network storage location
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StorageEntry'
+      responses:
+        "200":
+          description: Storage added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageEntry'
+
+  /admin/api/content/library/storages/{storageId}:
+    delete:
+      tags: [Library]
+      summary: Remove a storage location
+      parameters:
+        - name: storageId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/content/library/storages/{storageId}/status:
+    get:
+      tags: [Library]
+      summary: Get storage connection status
+      parameters:
+        - name: storageId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Storage status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  # ─── Radio ───────────────────────────────────────────────────────────────────
+
+  /admin/api/content/radio/custom:
+    get:
+      tags: [Radio]
+      summary: List custom radio stations
+      responses:
+        "200":
+          description: Station list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RadioStation'
+    post:
+      tags: [Radio]
+      summary: Add a custom radio station
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                name:
+                  type: string
+                url:
+                  type: string
+                  format: uri
+      responses:
+        "200":
+          description: Station added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioStation'
+
+  /admin/api/content/radio/custom/{stationId}:
+    delete:
+      tags: [Radio]
+      summary: Remove a custom radio station
+      parameters:
+        - name: stationId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/content/radio/tunein/validate:
+    post:
+      tags: [Radio]
+      summary: Validate a TuneIn / stream URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  error:
+                    type: string
+                    nullable: true
+
+  # ─── Logs ────────────────────────────────────────────────────────────────────
+
+  /admin/api/logs:
+    get:
+      tags: [Logs]
+      summary: Get recent log entries
+      responses:
+        "200":
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LogEntry'
+
+  /admin/api/logs/stream:
+    get:
+      tags: [Logs]
+      summary: Stream live log output (Server-Sent Events)
+      responses:
+        "200":
+          description: SSE stream of log entries
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /admin/api/logs/level:
+    post:
+      tags: [Logs]
+      summary: Change the active log level
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level]
+              properties:
+                level:
+                  type: string
+                  enum: [spam, debug, info, warn, error, none]
+      responses:
+        "200":
+          description: Level changed
+
+  # ─── Config ──────────────────────────────────────────────────────────────────
+
+  /admin/api/config:
+    get:
+      tags: [Config]
+      summary: Get full server configuration
+      responses:
+        "200":
+          description: Config object
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    put:
+      tags: [Config]
+      summary: Replace full configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Config replaced
+    patch:
+      tags: [Config]
+      summary: Partially update configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Config patched
+    delete:
+      tags: [Config]
+      summary: Reset configuration to defaults
+      responses:
+        "204":
+          description: Reset
+
+  /admin/api/config/{path}:
+    get:
+      tags: [Config]
+      summary: Get a specific config sub-path
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+          description: "Dot-separated config path (e.g. `zones.1.name`)"
+      responses:
+        "200":
+          description: Config value
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    delete:
+      tags: [Config]
+      summary: Delete a config key
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── Alerts ──────────────────────────────────────────────────────────────────
+
+  /admin/api/alerts/files:
+    get:
+      tags: [Alerts]
+      summary: List alert sound files
+      responses:
+        "200":
+          description: Alert file list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AlertFile'
+
+  /admin/api/alerts/event-sounds/upload:
+    post:
+      tags: [Alerts]
+      summary: Upload a custom alert sound file (max 32 MB)
+      description: |
+        Allowed extensions: `.mp3`, `.wav`, `.ogg`, `.m4a`, `.aac`, `.flac`
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  filename:
+                    type: string
+                  size:
+                    type: integer
+
+  /admin/api/alerts/files/{alertId}:
+    post:
+      tags: [Alerts]
+      summary: Update alert file metadata
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated
+
+  /admin/api/alerts/files/{alertId}/revert:
+    post:
+      tags: [Alerts]
+      summary: Revert alert file to default
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Reverted
+
+  # ─── Updates ─────────────────────────────────────────────────────────────────
+
+  /admin/api/adminui/update:
+    post:
+      tags: [Updates]
+      summary: Update the Admin UI to latest (or specific) release
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                release:
+                  type: string
+                  nullable: true
+                  description: Specific release tag, or omit for latest
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateResult'
+
+  /admin/api/components/update:
+    post:
+      tags: [Updates]
+      summary: Update an optional server component
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Component package name
+                version:
+                  type: string
+                  nullable: true
+                  description: Specific version, or omit for latest
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComponentUpdateResult'
+
+  /admin/api/setup/reinitialize:
+    post:
+      tags: [Config]
+      summary: Re-initialize server (containerized deployments only)
+      responses:
+        "200":
+          description: Re-initialized
+        "501":
+          description: Not supported in non-containerized deployments
+
+components:
+
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: lox_admin_session
+
+  security:
+    - cookieAuth: []
+
+  parameters:
+    zoneId:
+      name: zoneId
+      in: path
+      required: true
+      schema:
+        type: integer
+        example: 1
+
+  schemas:
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+          nullable: true
+
+    LoginResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        username:
+          type: string
+        tokenRights:
+          type: integer
+        loginAt:
+          type: integer
+          description: Unix ms
+        expiresAt:
+          type: integer
+          description: Unix ms
+
+    MeResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        username:
+          type: string
+        loginAt:
+          type: integer
+        expiresAt:
+          type: integer
+
+    ServerInfo:
+      type: object
+      properties:
+        version:
+          type: string
+        uptime:
+          type: number
+          description: Seconds
+        name:
+          type: string
+        serial:
+          type: string
+        firmwareVersion:
+          type: number
+        apiVersion:
+          type: number
+        miniserverIp:
+          type: string
+        miniserverSerial:
+          type: string
+        zones:
+          type: integer
+        activeAdapters:
+          type: integer
+        paired:
+          type: boolean
+        authEnabled:
+          type: boolean
+        containerized:
+          type: boolean
+        packages:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              version:
+                type: string
+
+    ZoneAdminState:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        title:
+          type: string
+        artist:
+          type: string
+        album:
+          type: string
+        sourceName:
+          type: string
+        station:
+          type: string
+        state:
+          type: string
+          enum: [play, pause, stop]
+        powerState:
+          type: string
+          enum: [on, off]
+        coverurl:
+          type: string
+        coverUrl:
+          type: string
+        updatedAt:
+          type: integer
+          description: Unix ms
+        tech:
+          type: object
+          description: Technical details (input/output adapters, stream URLs, session info)
+          properties:
+            input:
+              type: object
+              additionalProperties: true
+            output:
+              type: object
+              additionalProperties: true
+            inputProvider:
+              type: string
+              nullable: true
+            outputTarget:
+              type: string
+              nullable: true
+            outputs:
+              type: array
+              items: { type: string }
+            transports:
+              type: array
+              items: { type: string }
+            session:
+              type: object
+              additionalProperties: true
+            streams:
+              type: object
+              properties:
+                mp3:
+                  type: string
+                  nullable: true
+                pcm:
+                  type: string
+                  nullable: true
+
+    ZoneStatesResponse:
+      type: object
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: '#/components/schemas/ZoneAdminState'
+        system:
+          type: object
+          properties:
+            now:
+              type: integer
+              description: Unix ms
+            loadavg:
+              type: array
+              items: { type: number }
+            uptimeSec:
+              type: number
+            clockOffsetMs:
+              type: number
+              nullable: true
+            cores:
+              type: integer
+
+    ZoneGroup:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+        zones:
+          type: array
+          items: { type: integer }
+
+    NamedItem:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+
+    TransportsResponse:
+      type: object
+      properties:
+        transports:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              label:
+                type: string
+              description:
+                type: string
+              fields:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    label: { type: string }
+                    type: { type: string }
+                    placeholder: { type: string }
+                    description: { type: string }
+                    required: { type: boolean }
+        stateControllers:
+          type: array
+          items:
+            $ref: '#/components/schemas/NamedItem'
+
+    DeviceListResponse:
+      type: object
+      additionalProperties: true
+
+    LineInEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+
+    LineInBridge:
+      type: object
+      properties:
+        bridge_id:
+          type: string
+        hostname:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        mac:
+          type: string
+          nullable: true
+        assigned_input_id:
+          type: string
+          nullable: true
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        capture_devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaptureDevice'
+
+    CaptureDevice:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          nullable: true
+        channels:
+          type: integer
+          nullable: true
+        sample_rates:
+          type: array
+          items: { type: integer }
+          nullable: true
+
+    LineInBridgeRegistration:
+      type: object
+      required: [bridge_id]
+      properties:
+        bridge_id:
+          type: string
+        hostname:
+          type: string
+        version:
+          type: string
+        ip:
+          type: string
+        mac:
+          type: string
+        capture_devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaptureDevice'
+
+    LineInBridgeConfig:
+      type: object
+      additionalProperties: true
+
+    LineInBridgeStatus:
+      type: object
+      properties:
+        state:
+          type: string
+          nullable: true
+        device:
+          type: string
+          nullable: true
+        rate:
+          type: integer
+          nullable: true
+        channels:
+          type: integer
+          nullable: true
+        format:
+          type: string
+          nullable: true
+        rms_db:
+          type: number
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+        track_change:
+          type: boolean
+          nullable: true
+        capture_devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaptureDevice'
+          nullable: true
+
+    LineInBridgeStatusResponse:
+      type: object
+      properties:
+        linein_id:
+          type: string
+        bridge_id:
+          type: string
+          nullable: true
+        connected:
+          type: boolean
+        state:
+          type: string
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
+        device:
+          type: string
+          nullable: true
+
+    LineInIngestConfig:
+      type: object
+      properties:
+        linein_id:
+          type: string
+        ingest_tcp_host:
+          type: string
+        ingest_tcp_port:
+          type: integer
+          example: 7080
+        ingest_sample_rate:
+          type: integer
+          nullable: true
+        ingest_resampler:
+          type: string
+          nullable: true
+        capture_device:
+          type: string
+          nullable: true
+        vad_threshold_db:
+          type: number
+          nullable: true
+        vad_hold_ms:
+          type: integer
+          nullable: true
+
+    LibraryStatus:
+      type: object
+      properties:
+        scanning:
+          type: boolean
+        indexedTracks:
+          type: integer
+        indexedAlbums:
+          type: integer
+        indexedArtists:
+          type: integer
+        lastScanAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    UploadResult:
+      type: object
+      properties:
+        imported:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: array
+          items: { type: string }
+
+    StorageEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        type:
+          type: string
+          enum: [smb, nfs, local]
+
+    RadioStation:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+
+    LogEntry:
+      type: object
+      properties:
+        timestamp:
+          type: integer
+          description: Unix ms
+        level:
+          type: string
+          enum: [spam, debug, info, warn, error]
+        component:
+          type: string
+        message:
+          type: string
+
+    AlertFile:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        source:
+          type: string
+          enum: [default, custom, uploaded]
+
+    UpdateResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        release:
+          type: string
+        distUrl:
+          type: string
+        targetDir:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    ComponentUpdateResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        name:
+          type: string
+        requestedVersion:
+          type: string
+          nullable: true
+        installed:
+          type: string
+          nullable: true
+        declared:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true

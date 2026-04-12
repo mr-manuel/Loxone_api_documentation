@@ -1,0 +1,2621 @@
+openapi: 3.1.0
+info:
+  title: Loxone AudioServer – App & MiniServer API
+  description: |
+    The `audio/…` command protocol spoken **by both the Loxone App and the
+    Loxone MiniServer** when communicating with the AudioServer.
+
+    ## Two separate listener ports
+
+    The AudioServer runs **two identical HTTP + WebSocket servers** — one for
+    the App and one for the MiniServer.  Both servers handle the same route
+    registry, but the MiniServer also sends a set of config-sync and pairing
+    commands that the App never sends.
+
+    | Client | Server name | Default port | Purpose |
+    |--------|-------------|--------------|---------|
+    | **Loxone App** | `appHttp` | `7091` | Zone control, browsing, search |
+    | **Loxone MiniServer** | `msHttp` | `7090` | Same as App **+** config sync, pairing, heartbeat |
+
+    The WebSocket **identification string** sent on connect differs:
+    - App: `LWSS V 16.1.10.01 | ~API:1.6~ | Session-Token: …`
+    - MiniServer: `MINISERVER V LWSS V 16.1.10.01 {mac} | ~API:1.6~ | Session-Token: …`
+
+    When the MiniServer WebSocket connects the AudioServer also emits a
+    **server heartbeat** with current state back to the MiniServer.
+
+    ## Tag legend
+
+    | Tag prefix | Used by |
+    |------------|---------|
+    | *(no prefix)* | **App + MiniServer** — both clients send these |
+    | **`MiniServer ›`** | **MiniServer only** — App never sends these |
+
+    ## Command format (shared protocol)
+    - Transport: **HTTP GET** or **WebSocket text frame** (same command string)
+    - Parameters: **slash-separated path segments**, no request body
+    - Audio paths / URIs: **URL-encoded** within the path
+    - Response: `{ "{command}_result": <payload>, "command": "<original-path>" }`
+
+    ## Audio Types (`audiotype`)
+    | Value | Description |
+    |-------|-------------|
+    | 0 | File (local) |
+    | 1 | Radio |
+    | 2 | Playlist |
+    | 3 | Line-In |
+    | 4 | AirPlay |
+    | 5 | Spotify |
+    | 6 | Bluetooth |
+    | 7 | SoundSuit |
+
+    ## File / Container Types (`type`)
+    | Value | Description |
+    |-------|-------------|
+    | 0 | Unknown |
+    | 1 | Folder |
+    | 2 | File |
+    | 3 | Playlist |
+    | 4 | Favorite |
+    | 5 | Spotify Connect |
+    | 6 | Line-In |
+    | 7 | Playlist (browsable) |
+    | 8 | Search |
+    | 11 | Playlist (editable) |
+    | 13 | Playlist (followable) |
+
+    ## Repeat Modes (`plrepeat`)
+    | Value | Description |
+    |-------|-------------|
+    | 0 | Off |
+    | 1 | Repeat queue |
+    | 3 | Repeat track |
+
+    ## WebSocket Events (server → client push)
+    Sent to **all connected clients** (App and MiniServer) on state changes:
+
+    | Event key | Trigger |
+    |-----------|---------|
+    | `audio_event` | Zone state changed |
+    | `audio_queue_event` | Queue contents changed |
+    | `roomfavchanged_event` | Room favorites changed |
+    | `recentlyplayedchanged_event` | Recently played changed |
+    | `rescan_event` | Media library scan progress |
+    | `globalsearch_result` | Global search result ready |
+    | `audio_sync_event` | Player sync group changed |
+    | `lineinchanged_event` | Line-in inputs changed |
+
+  version: "1.0.0"
+  contact:
+    name: Loxone Audio Server
+
+servers:
+  - url: http://{host}:{appPort}
+    description: "App server (appHttp) — Loxone App connects here"
+    variables:
+      host:
+        default: "192.168.1.78"
+        description: AudioServer hostname or IP
+      appPort:
+        default: "7091"
+        description: App-facing HTTP port (env LOXONE_APP_PORT)
+  - url: http://{host}:{msPort}
+    description: "MiniServer server (msHttp) — Loxone MiniServer connects here"
+    variables:
+      host:
+        default: "192.168.1.78"
+        description: AudioServer hostname or IP
+      msPort:
+        default: "7090"
+        description: MiniServer-facing HTTP port (env LOXONE_MINISERVER_PORT)
+
+tags:
+  # ── Shared: used by both App and MiniServer ──────────────────────────────
+  - name: Zone Playback
+    description: "**App + MiniServer.** Per-zone playback control (play, pause, volume, seek, …)"
+  - name: Zone Queue
+    description: "**App + MiniServer.** Queue inspection and navigation"
+  - name: Zone Content
+    description: "**App + MiniServer.** Content playback (services, playlists, library, favorites)"
+  - name: Zone Status
+    description: "**App + MiniServer.** Zone state retrieval"
+  - name: Grouped Playback
+    description: "**App + MiniServer.** Commands targeting multiple zones simultaneously"
+  - name: Config – Radio
+    description: "**App + MiniServer.** Custom radio station management"
+  - name: Config – Playlists
+    description: "**App + MiniServer.** Playlist management"
+  - name: Config – Favorites
+    description: "**App + MiniServer.** Room favorites management"
+  - name: Config – Services
+    description: "**App + MiniServer.** Streaming service configuration (Spotify, SoundSuit, …)"
+  - name: Config – Storage
+    description: "**App + MiniServer.** Network storage and media library"
+  - name: Config – Equalizer
+    description: "**App + MiniServer.** Equalizer settings"
+  - name: Config – Features
+    description: "**App + MiniServer.** Feature toggles (AirPlay, Spotify Connect, TuneIn)"
+  - name: Config – Search
+    description: "**App + MiniServer.** Search across all services and library"
+  - name: Config – Info
+    description: "**App + MiniServer.** Server and player information"
+  # ── MiniServer only ──────────────────────────────────────────────────────
+  - name: "MiniServer › Pairing & Auth"
+    description: |
+      **MiniServer only.** Bootstrap / pairing handshake sent by the MiniServer
+      immediately after establishing a WebSocket connection.
+      The App never sends these commands.
+  - name: "MiniServer › Config Sync"
+    description: |
+      **MiniServer only.** Configuration synchronisation commands sent by the
+      MiniServer to push or pull zone names, volumes, timestamps, and other
+      settings.  The App never sends these commands.
+
+paths:
+
+  # ─── Zone Status ────────────────────────────────────────────────────────────
+
+  /audio/{zoneId}/status:
+    get:
+      tags: [Zone Status]
+      summary: Get zone status
+      description: Returns the full current state of a zone including playback mode, metadata, volume, and repeat/shuffle settings.
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: Zone status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZoneStatusResponse'
+
+  /audio/{zoneId}/getqueue:
+    get:
+      tags: [Zone Queue]
+      summary: Get queue (first 50 items)
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: Queue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueResponse'
+
+  /audio/{zoneId}/getqueue/{start}/{limit}:
+    get:
+      tags: [Zone Queue]
+      summary: Get queue (paginated)
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: start
+          in: path
+          required: true
+          schema:
+            type: integer
+            default: 0
+          description: Zero-based start index
+        - name: limit
+          in: path
+          required: true
+          schema:
+            type: integer
+            default: 50
+          description: Maximum number of items to return
+      responses:
+        "200":
+          description: Queue page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueResponse'
+
+  /audio/{zoneId}/recent:
+    get:
+      tags: [Zone Status]
+      summary: Get recently played items
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: Recently played list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/recent/clear:
+    get:
+      tags: [Zone Status]
+      summary: Clear recently played history
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Zone Playback Control ──────────────────────────────────────────────────
+
+  /audio/{zoneId}/play:
+    get:
+      tags: [Zone Playback]
+      summary: Start / resume playback
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/pause:
+    get:
+      tags: [Zone Playback]
+      summary: Pause playback
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/resume:
+    get:
+      tags: [Zone Playback]
+      summary: Resume playback
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/on:
+    get:
+      tags: [Zone Playback]
+      summary: Power zone on
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/off:
+    get:
+      tags: [Zone Playback]
+      summary: Power zone off
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/volume/{value}:
+    get:
+      tags: [Zone Playback]
+      summary: Set volume
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: value
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+          description: Volume level (0–100)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/mastervolume/{value}:
+    get:
+      tags: [Zone Playback]
+      summary: Set amplifier master volume
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: value
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/position/{seconds}:
+    get:
+      tags: [Zone Playback]
+      summary: Seek to position
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: seconds
+          in: path
+          required: true
+          schema:
+            type: number
+            minimum: 0
+          description: Target position in seconds
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/shuffle/{mode}:
+    get:
+      tags: [Zone Playback]
+      summary: Set shuffle mode
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: mode
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [enable, disable, on, off, "1", "0"]
+          description: Shuffle on/off
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/repeat/{mode}:
+    get:
+      tags: [Zone Playback]
+      summary: Set repeat mode
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: mode
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1, 3]
+          description: "0 = off, 1 = repeat queue, 3 = repeat track"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/queueplus:
+    get:
+      tags: [Zone Queue]
+      summary: Skip to next track
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/queueminus:
+    get:
+      tags: [Zone Queue]
+      summary: Skip to previous track
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Zone Content ───────────────────────────────────────────────────────────
+
+  /audio/{zoneId}/serviceplay/{service}/{user}/{audiopath}:
+    get:
+      tags: [Zone Content]
+      summary: Play content from a streaming service
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+            example: spotify
+          description: Service name (e.g. `spotify`, `tunein`, `soundsuit`)
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Service username / account identifier
+        - name: audiopath
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded audio path / URI (e.g. `spotify%3Atrack%3A4iV5W9uYEdYUVa79Axb7Rh`)
+      responses:
+        "200":
+          description: Playback started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicePlayResponse'
+
+  /audio/{zoneId}/serviceplay/{service}/{user}/{audiopath}/noshuffle:
+    get:
+      tags: [Zone Content]
+      summary: Play service content without shuffle
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: audiopath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Playback started (shuffle off)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicePlayResponse'
+
+  /audio/{zoneId}/playlist/play/{audiopath}:
+    get:
+      tags: [Zone Content]
+      summary: Play a playlist
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: audiopath
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded playlist path
+      responses:
+        "200":
+          description: Playback started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/library/play/{audiopath}:
+    get:
+      tags: [Zone Content]
+      summary: Play from local library
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: audiopath
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded library path
+      responses:
+        "200":
+          description: Playback started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/playurl/{url}:
+    get:
+      tags: [Zone Content]
+      summary: Play an arbitrary URL
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: url
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded stream URL
+      responses:
+        "200":
+          description: Playback started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/linein:
+    get:
+      tags: [Zone Content]
+      summary: Switch to default line-in input
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/linein/{inputId}:
+    get:
+      tags: [Zone Content]
+      summary: Switch to specific line-in input
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: inputId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/roomfav/play/{favoriteId}:
+    get:
+      tags: [Zone Content]
+      summary: Play a room favorite
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: favoriteId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Favorite slot index (1-based)
+      responses:
+        "200":
+          description: Playback started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomFavPlayResponse'
+
+  /audio/{zoneId}/roomfav/play/{favoriteId}/fade/{durationMs}:
+    get:
+      tags: [Zone Content]
+      summary: Play a room favorite with fade-in
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: favoriteId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: durationMs
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Fade-in duration in milliseconds
+      responses:
+        "200":
+          description: Playback started with fade
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomFavPlayResponse'
+
+  /audio/{zoneId}/roomfav/plus:
+    get:
+      tags: [Zone Content]
+      summary: Play next favorite in rotation
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Grouped Playback ───────────────────────────────────────────────────────
+
+  /audio/grouped/play:
+    get:
+      tags: [Grouped Playback]
+      summary: Start playback on multiple zones
+      description: Zone IDs are passed as a comma-separated list in the query or path.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/grouped/pause:
+    get:
+      tags: [Grouped Playback]
+      summary: Pause multiple zones
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/grouped/volume/{zoneIds}/{value}:
+    get:
+      tags: [Grouped Playback]
+      summary: Set volume on multiple zones
+      parameters:
+        - name: zoneIds
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "1,2,3"
+          description: Comma-separated zone IDs
+        - name: value
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/grouped/playuploadedfile/{filename}/{playerIds}/{volume}:
+    get:
+      tags: [Grouped Playback]
+      summary: Play an uploaded audio file on multiple zones
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: playerIds
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "1,2"
+        - name: volume
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/grouped/playeventfile/{zoneIds}:
+    get:
+      tags: [Grouped Playback]
+      summary: Play an event file on multiple zones
+      parameters:
+        - name: zoneIds
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Radio ─────────────────────────────────────────────────────────
+
+  /audio/cfg/getradios:
+    get:
+      tags: [Config – Radio]
+      summary: Get all radio stations
+      responses:
+        "200":
+          description: List of radio stations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/radios/add:
+    get:
+      tags: [Config – Radio]
+      summary: Add a custom radio station
+      responses:
+        "200":
+          description: Station added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/radios/del:
+    get:
+      tags: [Config – Radio]
+      summary: Delete a custom radio station
+      responses:
+        "200":
+          description: Station deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/radios/modify:
+    get:
+      tags: [Config – Radio]
+      summary: Modify a custom radio station
+      responses:
+        "200":
+          description: Station modified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/radios/coverurl/{id}:
+    get:
+      tags: [Config – Radio]
+      summary: Manage cover art for a radio station
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Playlists ─────────────────────────────────────────────────────
+
+  /audio/cfg/getplaylists2:
+    get:
+      tags: [Config – Playlists]
+      summary: Get all playlists
+      responses:
+        "200":
+          description: Playlist list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getplaylists2/lms/{service}/{user}/{offset}/{limit}:
+    get:
+      tags: [Config – Playlists]
+      summary: Get playlists with pagination
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: limit
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paginated playlist list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/playlist/create:
+    get:
+      tags: [Config – Playlists]
+      summary: Create a new playlist
+      responses:
+        "200":
+          description: Playlist created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/playlist/deletelist:
+    get:
+      tags: [Config – Playlists]
+      summary: Delete a playlist
+      responses:
+        "200":
+          description: Playlist deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/playlist/rename:
+    get:
+      tags: [Config – Playlists]
+      summary: Rename a playlist
+      responses:
+        "200":
+          description: Playlist renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/playlist/update:
+    get:
+      tags: [Config – Playlists]
+      summary: Update playlist items (add / remove / reorder)
+      responses:
+        "200":
+          description: Playlist updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/playlist/follow:
+    get:
+      tags: [Config – Playlists]
+      summary: Follow a playlist
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Favorites ─────────────────────────────────────────────────────
+
+  /audio/cfg/getroomfavs/{playerId}:
+    get:
+      tags: [Config – Favorites]
+      summary: Get room favorites for a zone
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Room favorites
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs:
+    get:
+      tags: [Config – Favorites]
+      summary: Add / delete / reorder / modify room favorites
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs/{playerId}/copy/{sourcePlayerId}:
+    get:
+      tags: [Config – Favorites]
+      summary: Copy favorites from one zone to another
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Target zone ID
+        - name: sourcePlayerId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Source zone ID
+      responses:
+        "200":
+          description: Favorites copied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/follow/{service}/{user}/{audioPath}:
+    get:
+      tags: [Config – Favorites]
+      summary: Follow an item / playlist
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: audioPath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/unfollow/{service}/{user}/{audioPath}:
+    get:
+      tags: [Config – Favorites]
+      summary: Unfollow an item / playlist
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: audioPath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/isfollowed/{service}/{user}/{audioPath}:
+    get:
+      tags: [Config – Favorites]
+      summary: Check if an item is followed
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: audioPath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Followed status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Services ──────────────────────────────────────────────────────
+
+  /audio/cfg/getservices:
+    get:
+      tags: [Config – Services]
+      summary: Get all configured services
+      responses:
+        "200":
+          description: Service list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getavailableservices:
+    get:
+      tags: [Config – Services]
+      summary: Get services not yet configured
+      responses:
+        "200":
+          description: Available service list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getservicefolder/{service}/{user}/{path}/{offset}/{limit}:
+    get:
+      tags: [Config – Services]
+      summary: Browse service content folder
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded folder path
+        - name: offset
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: limit
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Folder contents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/servicecfg/add:
+    get:
+      tags: [Config – Services]
+      summary: Add a new service account
+      responses:
+        "200":
+          description: Service added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/servicecfg/delete/{service}/{id}:
+    get:
+      tags: [Config – Services]
+      summary: Delete a service account
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Service deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/servicecfg/update/{service}/{oldUser}/{newUser}/{password}:
+    get:
+      tags: [Config – Services]
+      summary: Update service credentials
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: oldUser
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: newUser
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: password
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded (possibly encrypted) password
+      responses:
+        "200":
+          description: Credentials updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/servicecfg/set:
+    get:
+      tags: [Config – Services]
+      summary: Set default service account for a zone
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/servicecfg/getlink/{service}:
+    get:
+      tags: [Config – Services]
+      summary: Get OAuth / authentication link for a service
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+            example: spotify
+      responses:
+        "200":
+          description: Auth link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Storage ───────────────────────────────────────────────────────
+
+  /audio/cfg/storage/list:
+    get:
+      tags: [Config – Storage]
+      summary: List configured network storage locations
+      responses:
+        "200":
+          description: Storage list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/storage/add:
+    get:
+      tags: [Config – Storage]
+      summary: Add a network storage location
+      responses:
+        "200":
+          description: Storage added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/storage/edit/{id}/{config}:
+    get:
+      tags: [Config – Storage]
+      summary: Edit a storage configuration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: config
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded JSON configuration
+      responses:
+        "200":
+          description: Storage updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/storage/delete/{id}:
+    get:
+      tags: [Config – Storage]
+      summary: Delete a storage location
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Storage deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getmediafolder:
+    get:
+      tags: [Config – Storage]
+      summary: Get media library folder structure
+      responses:
+        "200":
+          description: Folder tree
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/rescan:
+    get:
+      tags: [Config – Storage]
+      summary: Rescan entire media library
+      responses:
+        "200":
+          description: Rescan started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/rescan/{folder}:
+    get:
+      tags: [Config – Storage]
+      summary: Rescan a specific folder
+      parameters:
+        - name: folder
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded folder path
+      responses:
+        "200":
+          description: Rescan started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/scanstatus:
+    get:
+      tags: [Config – Storage]
+      summary: Get media library scan status
+      responses:
+        "200":
+          description: Scan status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanStatusResponse'
+
+  # ─── Config – Equalizer ─────────────────────────────────────────────────────
+
+  /audio/cfg/geteq:
+    get:
+      tags: [Config – Equalizer]
+      summary: Get equalizer settings
+      responses:
+        "200":
+          description: EQ settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/seteq:
+    get:
+      tags: [Config – Equalizer]
+      summary: Set equalizer (single band or all bands)
+      responses:
+        "200":
+          description: EQ updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Features ──────────────────────────────────────────────────────
+
+  /audio/cfg/airplay/enable:
+    get:
+      tags: [Config – Features]
+      summary: Enable AirPlay
+      responses:
+        "200":
+          description: AirPlay enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/airplay/disable:
+    get:
+      tags: [Config – Features]
+      summary: Disable AirPlay
+      responses:
+        "200":
+          description: AirPlay disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/spotifyconnect/enable:
+    get:
+      tags: [Config – Features]
+      summary: Enable Spotify Connect
+      responses:
+        "200":
+          description: Spotify Connect enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/spotifyconnect/disable:
+    get:
+      tags: [Config – Features]
+      summary: Disable Spotify Connect
+      responses:
+        "200":
+          description: Spotify Connect disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/tunein/enable:
+    get:
+      tags: [Config – Features]
+      summary: Enable TuneIn
+      responses:
+        "200":
+          description: TuneIn enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/tunein/disable:
+    get:
+      tags: [Config – Features]
+      summary: Disable TuneIn
+      responses:
+        "200":
+          description: TuneIn disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Search ────────────────────────────────────────────────────────
+
+  /audio/cfg/search:
+    get:
+      tags: [Config – Search]
+      summary: Global search across all services
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/search/{service}/{user}/{tag}/{query}/{limit}/{offset}:
+    get:
+      tags: [Config – Search]
+      summary: Detailed search within a service
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tag
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Search scope tag
+        - name: query
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded search query
+        - name: limit
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: offset
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/globalsearch:
+    get:
+      tags: [Config – Search]
+      summary: Trigger global search (result delivered via WebSocket)
+      responses:
+        "200":
+          description: Search triggered; result comes via `globalsearch_result` WebSocket event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/globalsearch/describe:
+    get:
+      tags: [Config – Search]
+      summary: Describe / paginate a previous global search result
+      responses:
+        "200":
+          description: Described results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/searchdetails/library/nouser/{query}:
+    get:
+      tags: [Config – Search]
+      summary: Search local library (no account required)
+      parameters:
+        - name: query
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded search query
+      responses:
+        "200":
+          description: Library search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── Config – Info ──────────────────────────────────────────────────────────
+
+  /audio/cfg/getplayersdetails:
+    get:
+      tags: [Config – Info]
+      summary: Get details for all players / zones
+      responses:
+        "200":
+          description: Player details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getinputs:
+    get:
+      tags: [Config – Info]
+      summary: Get all available line-in inputs
+      responses:
+        "200":
+          description: Input list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getsyncedplayers:
+    get:
+      tags: [Config – Info]
+      summary: Get synchronized player groups
+      responses:
+        "200":
+          description: Sync groups
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getkey:
+    get:
+      tags: [Config – Info]
+      summary: Get encryption key (short)
+      responses:
+        "200":
+          description: Encryption key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/getkey/full:
+    get:
+      tags: [Config – Info]
+      summary: Get encryption key (full)
+      responses:
+        "200":
+          description: Full encryption key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/mac:
+    get:
+      tags: [Config – Info]
+      summary: Get server MAC address
+      responses:
+        "200":
+          description: MAC address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/diagnosis:
+    get:
+      tags: [Config – Info]
+      summary: Get diagnostic information
+      responses:
+        "200":
+          description: Diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/restart:
+    get:
+      tags: [Config – Info]
+      summary: Restart the audio server
+      responses:
+        "200":
+          description: Restart initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/installupdate:
+    get:
+      tags: [Config – Info]
+      summary: Install a pending software update
+      responses:
+        "200":
+          description: Update started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/props/updatelevel:
+    get:
+      tags: [Config – Info]
+      summary: Update property level
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/dgroup/update:
+    get:
+      tags: [Config – Info]
+      summary: Update dynamic player groups
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/unsyncmulti/{playerIds}:
+    get:
+      tags: [Config – Info]
+      summary: Unsync multiple players
+      parameters:
+        - name: playerIds
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "1,2,3"
+          description: Comma-separated player IDs
+      responses:
+        "200":
+          description: Players unsynced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/audiodelay/{playerId}:
+    get:
+      tags: [Config – Info]
+      summary: Get audio delay for a zone
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Audio delay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/audiodelay/{playerId}/{delay}:
+    get:
+      tags: [Config – Info]
+      summary: Set audio delay for a zone
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: delay
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Delay in milliseconds
+      responses:
+        "200":
+          description: Delay set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/input/{playerId}/{inputId}:
+    get:
+      tags: [Config – Info]
+      summary: Select line-in input for a zone
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: inputId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Input selected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/upload/audioupload/add/{filename}:
+    get:
+      tags: [Config – Info]
+      summary: Register an uploaded audio file
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # ─── MiniServer › Pairing & Auth ────────────────────────────────────────────
+  # Sent by the MiniServer immediately after WebSocket connect.
+  # The App never sends these.
+
+  /secure/info/pairing:
+    get:
+      tags: ["MiniServer › Pairing & Auth"]
+      summary: Query pairing status
+      description: |
+        Returns pairing state and the MiniServer serial that this AudioServer
+        is paired to. Error code `-81` means "not paired to any master".
+      responses:
+        "200":
+          description: Pairing info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurePairingResponse'
+
+  /secure/hello/{publicKey}:
+    get:
+      tags: ["MiniServer › Pairing & Auth"]
+      summary: Key-exchange bootstrap
+      description: |
+        The MiniServer sends its RSA public key; the AudioServer echoes it
+        back to confirm the channel.
+      parameters:
+        - name: publicKey
+          in: path
+          required: true
+          schema: { type: string }
+          description: Base64-encoded RSA public key from the MiniServer
+      responses:
+        "200":
+          description: Key echoed back
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecureHelloResponse'
+
+  /secure/authenticate:
+    get:
+      tags: ["MiniServer › Pairing & Auth"]
+      summary: Acknowledge authentication
+      description: Returns a fixed `"authentication successful"` confirmation.
+      responses:
+        "200":
+          description: Auth acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /secure/init:
+    get:
+      tags: ["MiniServer › Pairing & Auth"]
+      summary: Session initialisation
+      description: |
+        Returns a legacy JWT used by older MiniServer firmware for session
+        bookkeeping. The token is fixed and not cryptographically verified.
+      responses:
+        "200":
+          description: Session JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecureInitResponse'
+
+  # ─── MiniServer › Config Sync ────────────────────────────────────────────────
+  # Sent by the MiniServer to push or pull configuration.
+  # The App never sends these.
+
+  /audio/cfg/ready:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Signal readiness
+      description: |
+        Sent by the MiniServer once it has finished its startup sequence.
+        The AudioServer responds with a session timestamp so the MiniServer
+        can detect restarts.
+      responses:
+        "200":
+          description: Ready acknowledged with session timestamp
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  command:
+                    type: string
+                    example: "audio/cfg/ready"
+                  ready_result:
+                    type: object
+                    properties:
+                      session:
+                        type: integer
+                        description: Unix ms timestamp of the current AudioServer session
+
+  /audio/cfg/getconfig:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Fetch zone configuration checksum
+      description: |
+        The MiniServer calls this to check whether its cached configuration is
+        still valid.  Returns the CRC-32 of the current config and any active
+        extensions.
+      responses:
+        "200":
+          description: Config checksum
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  command:
+                    type: string
+                  getconfig_result:
+                    type: object
+                    properties:
+                      crc32:
+                        type: string
+                        nullable: true
+                        description: CRC-32 hex string of the current zone config
+                      extensions:
+                        type: array
+                        items: { type: string }
+
+  /audio/cfg/setconfig:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Push zone configuration from MiniServer
+      description: |
+        The MiniServer sends zone names, UUIDs, and settings to the
+        AudioServer so it can map Loxone zone UUIDs to internal player IDs.
+      responses:
+        "200":
+          description: Config accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/setconfigtimestamp:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Sync configuration version timestamp
+      description: |
+        Updates the AudioServer's record of when the MiniServer config was
+        last modified.  Used to detect stale caches.
+      responses:
+        "200":
+          description: Timestamp accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/miniservertime:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Sync MiniServer wall-clock time
+      description: |
+        The MiniServer periodically sends its current Unix timestamp so the
+        AudioServer can correct relative time values (e.g. schedule offsets).
+      responses:
+        "200":
+          description: Time accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/volumes:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Bulk-set initial zone volumes
+      description: |
+        Sent by the MiniServer on startup to restore the last-known volume
+        for every zone at once.
+      responses:
+        "200":
+          description: Volumes applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/playername:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Set zone display name
+      description: Sent by the MiniServer to rename a zone on the AudioServer.
+      responses:
+        "200":
+          description: Name applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/identify:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: MiniServer identification
+      description: |
+        The MiniServer sends its serial number and firmware version so the
+        AudioServer can tag log entries and heartbeats.
+      responses:
+        "200":
+          description: Identification accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/defaultvolume/{zoneId}/{volume}:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Set default startup volume for a zone
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: volume
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: Default volume set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/maxvolume/{zoneId}/{volume}:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Set maximum allowed volume for a zone
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: volume
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: Max volume set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/eventvolumes/{zoneId}/{volume}:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: Set alert / event volume for a zone
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: volume
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: Event volume set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  # Placeholder endpoints — accepted but not acted on
+  /audio/cfg/miniserverip:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: "Placeholder — MiniServer IP hint (ignored)"
+      description: Accepted for protocol compatibility; AudioServer takes no action.
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/miniserverversion:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: "Placeholder — MiniServer firmware version hint (ignored)"
+      description: Accepted for protocol compatibility; AudioServer takes no action.
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/timezone:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: "Placeholder — timezone hint (ignored)"
+      description: Accepted for protocol compatibility; AudioServer takes no action.
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/presencemode:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: "Placeholder — presence mode hint (ignored)"
+      description: Accepted for protocol compatibility; AudioServer takes no action.
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/groupopts:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: "Placeholder — group options hint (ignored)"
+      description: Accepted for protocol compatibility; AudioServer takes no action.
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/speakertype:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: "Placeholder — speaker type hint (ignored)"
+      description: Accepted for protocol compatibility; AudioServer takes no action.
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/playeropts:
+    get:
+      tags: ["MiniServer › Config Sync"]
+      summary: "Placeholder — player options hint (ignored)"
+      description: Accepted for protocol compatibility; AudioServer takes no action.
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+# ─── Components ───────────────────────────────────────────────────────────────
+
+components:
+
+  parameters:
+    zoneId:
+      name: zoneId
+      in: path
+      required: true
+      schema:
+        type: integer
+        example: 1
+      description: Numeric zone / player ID
+
+  schemas:
+
+    CommandResponse:
+      type: object
+      description: Generic command response wrapper
+      properties:
+        command:
+          type: string
+          description: The original command path
+          example: "audio/1/play"
+        error:
+          type: string
+          description: Error message (only present on failure)
+      additionalProperties: true
+
+    ZoneState:
+      type: object
+      description: Full state snapshot of a zone / player
+      required: [playerid, name, mode, volume]
+      properties:
+        playerid:
+          type: integer
+          description: Zone identifier
+          example: 1
+        name:
+          type: string
+          description: Zone display name
+          example: "Living Room"
+        mode:
+          type: string
+          enum: [play, pause, stop]
+          description: Current playback state
+        power:
+          type: string
+          enum: [on, off]
+          description: Physical power state
+        clientState:
+          type: string
+          enum: [on, off]
+          description: Client (UI) power state
+        powerState:
+          type: string
+          enum: [on, off]
+          description: Managed amplifier power state
+          nullable: true
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Current volume (0–100)
+        title:
+          type: string
+          description: Current track title
+        artist:
+          type: string
+          description: Track artist
+        album:
+          type: string
+          description: Track album
+        station:
+          type: string
+          description: Radio station metadata (name or description)
+        coverurl:
+          type: string
+          description: URL to album / cover art
+        audiopath:
+          type: string
+          description: Internal encoded audio URI of current track
+        audiotype:
+          type: integer
+          description: |
+            Audio source type:
+            0=File, 1=Radio, 2=Playlist, 3=LineIn, 4=AirPlay, 5=Spotify, 6=Bluetooth, 7=SoundSuit
+          enum: [0, 1, 2, 3, 4, 5, 6, 7]
+        type:
+          type: integer
+          description: File/container type enum
+        time:
+          type: number
+          description: Current playback position in seconds
+        duration:
+          type: number
+          description: Total track duration in seconds
+        qindex:
+          type: integer
+          description: Current zero-based queue position
+        plshuffle:
+          type: integer
+          enum: [0, 1]
+          description: "Shuffle: 0=off, 1=on"
+        plrepeat:
+          type: integer
+          enum: [0, 1, 3]
+          description: "Repeat mode: 0=off, 1=queue, 3=track"
+        queueAuthority:
+          type: string
+          nullable: true
+          description: "Queue owner identifier (e.g. local, spotify)"
+        sourceName:
+          type: string
+          description: Human-readable source name
+        icontype:
+          type: integer
+          nullable: true
+          description: |
+            Line-in icon type:
+            0=LineIn, 1=CdPlayer, 2=Computer, 3=iMac, 4=iPod, 5=Mobile, 6=Radio, 7=Screen, 8=TurnTable
+        qid:
+          type: string
+          nullable: true
+          description: Queue identifier
+        parent:
+          description: Currently-playing parent container (album / playlist / etc.)
+          nullable: true
+          oneOf:
+            - type: object
+              properties:
+                audiopath:
+                  type: string
+                coverurl:
+                  type: string
+                id:
+                  type: string
+                items:
+                  type: integer
+                  description: Total items in parent container
+                name:
+                  type: string
+                type:
+                  type: integer
+            - type: "null"
+
+    ZoneStatusResponse:
+      type: object
+      properties:
+        command:
+          type: string
+          example: "audio/1/status"
+        status_result:
+          type: array
+          items:
+            $ref: '#/components/schemas/ZoneState'
+
+    QueueItem:
+      type: object
+      description: A single item in the playback queue
+      properties:
+        qindex:
+          type: integer
+          description: Zero-based position in the queue
+        unique_id:
+          type: string
+          description: Unique queue item identifier
+        title:
+          type: string
+        artist:
+          type: string
+        album:
+          type: string
+        station:
+          type: string
+        coverurl:
+          type: string
+        audiopath:
+          type: string
+          description: Encoded audio URI
+        audiotype:
+          type: integer
+          enum: [0, 1, 2, 3, 4, 5, 6, 7]
+        duration:
+          type: number
+          description: Track duration in seconds
+        user:
+          type: string
+          description: Source account (e.g. username or "nouser")
+        originalIndex:
+          type: integer
+          nullable: true
+          description: Original position before shuffling
+
+    QueueResult:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Queue identifier
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueueItem'
+        shuffle:
+          type: boolean
+        start:
+          type: integer
+          description: Requested start index
+        totalitems:
+          type: integer
+          description: Total number of items in the queue
+
+    QueueResponse:
+      type: object
+      properties:
+        command:
+          type: string
+          example: "audio/1/getqueue/0/50"
+        getqueue_result:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueueResult'
+
+    ServicePlayResponse:
+      type: object
+      properties:
+        command:
+          type: string
+        serviceplay_result:
+          type: array
+          items:
+            type: object
+            properties:
+              zoneId:
+                type: integer
+              uri:
+                type: string
+
+    RoomFavPlayResponse:
+      type: object
+      properties:
+        command:
+          type: string
+        roomfav_result:
+          type: array
+          items:
+            type: object
+            properties:
+              playerid:
+                type: integer
+              playing_slot:
+                type: integer
+
+    ScanStatusResponse:
+      type: object
+      properties:
+        command:
+          type: string
+        scanstatus_result:
+          type: object
+          properties:
+            status:
+              type: integer
+              enum: [0, 1, 2]
+              description: "0=idle, 1=scanning, 2=complete"
+            folders:
+              type: integer
+              nullable: true
+            files:
+              type: integer
+              nullable: true
+
+    # ── WebSocket event payloads ──────────────────────────────────────────────
+
+    WsAudioEvent:
+      type: object
+      description: WebSocket event — zone state changed
+      properties:
+        audio_event:
+          type: array
+          items:
+            $ref: '#/components/schemas/ZoneState'
+
+    WsQueueEvent:
+      type: object
+      description: WebSocket event — queue contents changed
+      properties:
+        audio_queue_event:
+          type: array
+          items:
+            type: object
+            properties:
+              playerid:
+                type: integer
+              queuesize:
+                type: integer
+              restrictions:
+                type: integer
+
+    WsRoomFavChangedEvent:
+      type: object
+      description: WebSocket event — room favorites changed
+      properties:
+        roomfavchanged_event:
+          type: array
+          items:
+            type: object
+            properties:
+              playerid:
+                type: integer
+              count:
+                type: integer
+
+    WsRecentlyPlayedEvent:
+      type: object
+      description: WebSocket event — recently played changed
+      properties:
+        recentlyplayedchanged_event:
+          type: array
+          items:
+            type: object
+            properties:
+              playerid:
+                type: integer
+              ts:
+                type: integer
+                description: Unix timestamp
+
+    WsRescanEvent:
+      type: object
+      description: WebSocket event — library scan progress
+      properties:
+        rescan_event:
+          type: array
+          items:
+            type: object
+            properties:
+              status:
+                type: integer
+                enum: [0, 1, 2]
+                description: "0=idle, 1=scanning, 2=complete"
+              folders:
+                type: integer
+                nullable: true
+              files:
+                type: integer
+                nullable: true
+
+    WsGlobalSearchResult:
+      type: object
+      description: WebSocket event — global search result
+      properties:
+        globalsearch_result:
+          type: object
+          properties:
+            error:
+              type: integer
+              enum: [0, 1]
+            type:
+              type: string
+              description: Service that provided results (e.g. spotify)
+            unique:
+              type: string
+              description: Correlation ID matching the original request
+            result:
+              type: object
+              properties:
+                tracks:
+                  $ref: '#/components/schemas/SearchResultSection'
+                albums:
+                  $ref: '#/components/schemas/SearchResultSection'
+                artists:
+                  $ref: '#/components/schemas/SearchResultSection'
+                playlists:
+                  $ref: '#/components/schemas/SearchResultSection'
+                shows:
+                  $ref: '#/components/schemas/SearchResultSection'
+                episodes:
+                  $ref: '#/components/schemas/SearchResultSection'
+                topresults:
+                  $ref: '#/components/schemas/SearchResultSection'
+                user:
+                  type: string
+
+    SearchResultSection:
+      type: object
+      properties:
+        caption:
+          type: string
+        count:
+          type: integer
+        totalitems:
+          type: integer
+        link:
+          type: string
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    # ── MiniServer-only response schemas ─────────────────────────────────────
+
+    SecurePairingResponse:
+      type: object
+      description: Response to secure/info/pairing
+      properties:
+        command:
+          type: string
+          example: "secure/infopairing"
+        error:
+          type: integer
+          description: "0 = paired, -81 = not paired to any master"
+          example: -81
+        master:
+          type: string
+          description: Serial number of the paired MiniServer (empty if not paired)
+        peers:
+          type: array
+          items: { type: string }
+          description: Additional paired peers (usually empty)
+
+    SecureHelloResponse:
+      type: object
+      description: Response to secure/hello
+      properties:
+        command:
+          type: string
+          example: "secure/hello"
+        error:
+          type: integer
+          example: 0
+        public_key:
+          type: string
+          description: Echo of the public key sent by the MiniServer
+
+    SecureInitResponse:
+      type: object
+      description: Response to secure/init — contains a legacy session JWT
+      properties:
+        command:
+          type: string
+          example: "secure/init"
+        error:
+          type: integer
+          example: 0
+        jwt:
+          type: string
+          description: Legacy JWT string (fixed value, not cryptographically verified)

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Loxone API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    :root {
+      --lox-green: #69be28;
+      --lox-green-dark: #4a8a1a;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* ── Banner ──────────────────────────────────────────────────────────── */
+    .banner {
+      background: #1f1f1f;
+      border-bottom: 3px solid var(--lox-green);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .banner-logo {
+      width: 40px;
+      height: 40px;
+      background: var(--lox-green);
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .banner h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #fff;
+      margin: 0;
+    }
+
+    .banner p {
+      font-size: 0.82rem;
+      color: #aaa;
+      margin: 2px 0 0;
+    }
+
+    /* ── Tab bar ─────────────────────────────────────────────────────────── */
+    .tabbar {
+      background: #f5f5f5;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      gap: 0;
+      padding: 0 32px;
+      overflow-x: auto;
+    }
+
+    .tab {
+      padding: 13px 22px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #555;
+      border: none;
+      background: none;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -1px;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tab:hover { color: #222; }
+
+    .tab.active {
+      color: var(--lox-green-dark);
+      border-bottom-color: var(--lox-green);
+    }
+
+    .tab-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: #e0e0e0;
+      color: #555;
+      padding: 1px 6px;
+      border-radius: 10px;
+      letter-spacing: 0.03em;
+    }
+
+    .tab.active .tab-badge {
+      background: var(--lox-green);
+      color: #fff;
+    }
+
+    /* ── Quick-ref cards ─────────────────────────────────────────────────── */
+    .cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 20px 32px;
+      background: #fafafa;
+      border-bottom: 1px solid #e8e8e8;
+    }
+
+    .cards.hidden { display: none; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px 16px;
+      min-width: 200px;
+      flex: 1 1 200px;
+    }
+
+    .card h3 {
+      margin: 0 0 7px;
+      font-size: 0.73rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--lox-green-dark);
+    }
+
+    .card table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.8rem;
+    }
+
+    .card td {
+      padding: 2px 6px 2px 0;
+      color: #333;
+      vertical-align: top;
+    }
+
+    .card td:first-child {
+      color: #888;
+      white-space: nowrap;
+      padding-right: 10px;
+    }
+
+    code {
+      background: #eef6e4;
+      color: var(--lox-green-dark);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      font-size: 0.83em;
+    }
+
+    /* ── Swagger UI ──────────────────────────────────────────────────────── */
+    #swagger-ui {
+      padding: 0 32px 48px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .swagger-ui .topbar { display: none !important; }
+
+    .swagger-ui .opblock.opblock-get .opblock-summary-method {
+      background: var(--lox-green) !important;
+    }
+
+    .swagger-ui .btn.execute {
+      background: var(--lox-green) !important;
+      border-color: var(--lox-green) !important;
+    }
+
+    /* ── Footer ──────────────────────────────────────────────────────────── */
+    .footer-note {
+      text-align: center;
+      color: #aaa;
+      font-size: 0.78rem;
+      padding: 12px 0 28px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Banner -->
+  <header class="banner">
+    <div class="banner-logo">&#127925;</div>
+    <div>
+      <h1>Loxone API Documentation</h1>
+      <p>Reverse-engineered from the Loxone app bundle &amp; Lox AudioServer community project source</p>
+    </div>
+  </header>
+
+  <!-- Tab bar -->
+  <nav class="tabbar">
+    <button class="tab active" onclick="switchTab('miniserver')" id="tab-miniserver">
+      Loxone MiniServer API
+      <span class="tab-badge">WebSocket / HTTP</span>
+    </button>
+    <button class="tab" onclick="switchTab('audioserver')" id="tab-audioserver">
+      Loxone AudioServer – Loxone App &amp; Loxone MiniServer API
+      <span class="tab-badge">Shared protocol</span>
+    </button>
+    <button class="tab" onclick="switchTab('admin')" id="tab-admin">
+      Lox AudioServer – Admin API
+      <span class="tab-badge">HTTP REST</span>
+    </button>
+  </nav>
+
+  <!-- Quick-ref cards per tab -->
+  <section class="cards" id="cards-miniserver">
+    <div class="card">
+      <h3>Transport</h3>
+      <table>
+        <tr><td>WebSocket</td><td><code>ws://{host}/ws/rfc6455</code></td></tr>
+        <tr><td>HTTP mirror</td><td><code>GET http://{host}/{command}</code></td></tr>
+        <tr><td>Default port</td><td>80 (HTTP) / 443 (HTTPS)</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Control Command Format</h3>
+      <table>
+        <tr><td>Pattern</td><td><code>jdev/sps/io/{uuid}/{cmd}</code></td></tr>
+        <tr><td>With value</td><td><code>jdev/sps/io/{uuid}/{cmd}/{val}</code></td></tr>
+        <tr><td>UUID source</td><td><code>GET /data/LoxAPP3.json</code></td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Auth Flow</h3>
+      <table>
+        <tr><td>1</td><td><code>GET /jdev/cfg/api</code></td></tr>
+        <tr><td>2</td><td><code>GET /jdev/cfg/getPublicKey</code></td></tr>
+        <tr><td>3</td><td><code>GET /jdev/sys/gettoken/…</code></td></tr>
+        <tr><td>4+</td><td><code>GET /jdev/sys/authwithtoken/…</code></td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>State Updates (WebSocket push)</h3>
+      <table>
+        <tr><td>Format</td><td><code>{stateUuid}:{value}</code></td></tr>
+        <tr><td>Map UUIDs</td><td>from <code>control.states</code> in LoxAPP3</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="cards hidden" id="cards-audioserver">
+    <div class="card">
+      <h3>Zone Command Format</h3>
+      <table>
+        <tr><td>Method</td><td>HTTP <code>GET</code></td></tr>
+        <tr><td>Pattern</td><td><code>/audio/{zoneId}/{command}</code></td></tr>
+        <tr><td>Params</td><td>slash-separated in path</td></tr>
+        <tr><td>Encoding</td><td>URL-encode audio paths</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Response Format</h3>
+      <table>
+        <tr><td>Success</td><td><code>{"play_result": […]}</code></td></tr>
+        <tr><td>Error</td><td><code>{"error": "…"}</code></td></tr>
+        <tr><td>Field</td><td><code>command</code> = original path</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Audio Types</h3>
+      <table>
+        <tr><td>0</td><td>File</td></tr>
+        <tr><td>1</td><td>Radio</td></tr>
+        <tr><td>2</td><td>Playlist</td></tr>
+        <tr><td>3</td><td>Line-In</td></tr>
+        <tr><td>4</td><td>AirPlay</td></tr>
+        <tr><td>5</td><td>Spotify</td></tr>
+        <tr><td>6</td><td>Bluetooth</td></tr>
+        <tr><td>7</td><td>SoundSuit</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>WebSocket Events</h3>
+      <table>
+        <tr><td><code>audio_event</code></td><td>Zone state changed</td></tr>
+        <tr><td><code>audio_queue_event</code></td><td>Queue changed</td></tr>
+        <tr><td><code>roomfavchanged_event</code></td><td>Favorites changed</td></tr>
+        <tr><td><code>rescan_event</code></td><td>Library scan progress</td></tr>
+        <tr><td><code>globalsearch_result</code></td><td>Search result ready</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="cards hidden" id="cards-admin">
+    <div class="card">
+      <h3>Authentication</h3>
+      <table>
+        <tr><td>Login</td><td><code>POST /admin/api/auth/login</code></td></tr>
+        <tr><td>Cookie</td><td><code>lox_admin_session</code></td></tr>
+        <tr><td>TTL</td><td>12 hours</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Stream URL</h3>
+      <table>
+        <tr><td>Audio</td><td><code>/streams/{zone}/{id}.mp3</code></td></tr>
+        <tr><td>Cover</td><td><code>/streams/{zone}/{id}/cover</code></td></tr>
+        <tr><td>Proxy</td><td><code>/streams/proxy?u={url}</code></td></tr>
+        <tr><td>Live logs</td><td><code>GET /admin/api/logs/stream</code> (SSE)</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Log Levels</h3>
+      <table>
+        <tr><td>spam</td><td>Most verbose</td></tr>
+        <tr><td>debug</td><td>Debug tracing</td></tr>
+        <tr><td>info</td><td>Normal operations</td></tr>
+        <tr><td>warn</td><td>Warnings</td></tr>
+        <tr><td>error</td><td>Errors only</td></tr>
+        <tr><td>none</td><td>Silent</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Upload Limits</h3>
+      <table>
+        <tr><td>Library</td><td>32 MB multipart</td></tr>
+        <tr><td>Alert sounds</td><td>32 MB (.mp3/.wav/.ogg/.m4a/.aac/.flac)</td></tr>
+        <tr><td>Widevine key</td><td>256 KB binary</td></tr>
+        <tr><td>Widevine id</td><td>10 MB binary</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- Swagger UI -->
+  <div id="swagger-ui"></div>
+
+  <p class="footer-note">
+    Reverse-engineered from the Loxone App bundle (<code>ftp://<loxone-miniserver>:21/web/commonv2.agz</code>) and the
+    <a href="https://github.com/lox-audioserver/lox-audioserver">Lox AudioServer</a> TypeScript source (<code>src/</code>) which is a community project — not an official Loxone document.
+  </p>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    const SPECS = {
+      miniserver:  'miniserver-api.yaml',
+      audioserver: 'openapi.yaml',
+      admin:       'audioserver-admin-api.yaml',
+    };
+
+    let ui;
+
+    function initUI(specUrl) {
+      ui = SwaggerUIBundle({
+        url: specUrl,
+        dom_id: '#swagger-ui',
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIBundle.SwaggerUIStandalonePreset,
+        ],
+        layout: 'BaseLayout',
+        deepLinking: false,
+        defaultModelsExpandDepth: 1,
+        defaultModelExpandDepth: 2,
+        displayRequestDuration: true,
+        filter: true,
+        syntaxHighlight: { activate: true, theme: 'idea' },
+        tryItOutEnabled: true,
+        docExpansion: 'none',
+        tagsSorter: 'alpha',
+        operationsSorter: 'alpha',
+      });
+    }
+
+    function switchTab(name) {
+      // Update tabs
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+
+      // Update cards
+      document.querySelectorAll('.cards').forEach(c => c.classList.add('hidden'));
+      document.getElementById('cards-' + name).classList.remove('hidden');
+
+      // Update Swagger UI
+      if (ui) {
+        ui.specActions.updateUrl(SPECS[name]);
+        ui.specActions.download(SPECS[name]);
+      } else {
+        initUI(SPECS[name]);
+      }
+    }
+
+    // Start with MiniServer tab
+    window.onload = () => initUI(SPECS.miniserver);
+  </script>
+</body>
+</html>
