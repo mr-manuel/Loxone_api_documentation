@@ -1922,6 +1922,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/IoResponse'
 
+  /jdev/sps/io/{uuid}/volstep:
+    get:
+      tags: [Audio]
+      summary: Volume step by default step size
+      description: >
+        Increases the volume by the zone's configured default step size
+        (see `volstep/{n}` for an explicit amount).
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/progress/{seconds}:
+    get:
+      tags: [Audio]
+      summary: Seek within the current track
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: seconds
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+          description: Target position in seconds
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
   /jdev/sps/io/{uuid}/shuffle/{enabled}:
     get:
       tags: [Audio]
@@ -1976,6 +2014,47 @@ paths:
           schema:
             type: integer
           description: Favourite slot index (1-based)
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/playzonefav/{favId}:
+    get:
+      tags: [Audio]
+      summary: Play a zone favourite by favourite ID
+      description: >
+        Lower-case variant sent by the App's shortcut / NFC screens
+        (`playzonefav/{favId}`), addressing the favourite by its **item ID**
+        rather than the slot index used by `playZoneFav/{id}`.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
+        - name: favId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID of the zone favourite item
+      responses:
+        "200":
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IoResponse'
+
+  /jdev/sps/io/{uuid}/roomfav/plus:
+    get:
+      tags: [Audio]
+      summary: Play the next zone favourite in rotation
+      description: >
+        Advances to the next room favourite (same rotation a Loxone Touch
+        T5 button triggers). Defined in the official App's command catalogue.
+      parameters:
+        - $ref: '#/components/parameters/uuid'
       responses:
         "200":
           description: Command sent

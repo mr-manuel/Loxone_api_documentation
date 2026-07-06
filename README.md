@@ -21,6 +21,8 @@ official Loxone document.
   - [MiniServer-only commands](#miniserver-only-commands)
   - [Response format](#response-format-both-clients)
   - [WebSocket events](#websocket-events-server--all-connected-clients)
+  - [How the official App connects](#how-the-official-app-connects-to-the-audioserver)
+  - [AudioServer feature gates](#audioserver-feature-gates-firmware-versions)
 - [API 4: Lox AudioServer Admin UI](#api-4-lox-audioserver-admin-ui--loxone-audioserver-audioserver-admin-apiyaml)
 - [Viewing the docs](#viewing-the-docs)
 - [Files](#files)
@@ -214,16 +216,65 @@ Sent by the MiniServer to push or pull configuration state:
 
 ### WebSocket events (server → all connected clients)
 
-| Event key                     | Trigger                 |
-| ----------------------------- | ----------------------- |
-| `audio_event`                 | Zone state changed      |
-| `audio_queue_event`           | Queue contents changed  |
-| `roomfavchanged_event`        | Room favorites changed  |
-| `recentlyplayedchanged_event` | Recently played changed |
-| `rescan_event`                | Library scan progress   |
-| `globalsearch_result`         | Search result ready     |
-| `audio_sync_event`            | Sync group changed      |
-| `lineinchanged_event`         | Line-in inputs changed  |
+| Event key                     | Trigger                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `audio_event`                 | Zone state changed                                                                                |
+| `audio_queue_event`           | Queue contents changed                                                                            |
+| `roomfavchanged_event`        | Room favorites changed                                                                            |
+| `recentlyplayedchanged_event` | Recently played changed                                                                           |
+| `rescan_event`                | Library scan progress                                                                             |
+| `globalsearch_result`         | Search result ready                                                                               |
+| `audio_sync_event`            | Sync group changed                                                                                |
+| `lineinchanged_event`         | Line-in inputs changed                                                                            |
+| `playlistchanged_event`       | Playlist contents changed                                                                         |
+| `reloadmusicapp_event`        | Client should reload data — payload `{action, cause, needsToReload, user}` (`cause` = service id) |
+| `service_changed_event`       | Configured streaming services changed                                                             |
+| `customurl_changed_event`     | Custom radio streams changed                                                                      |
+| `mastervolumechanged_event`   | Amplifier master volume changed                                                                   |
+| `usbchanged_event`            | USB storage attached / removed                                                                    |
+| `restart_event`               | AudioServer is restarting                                                                         |
+| `reboot_event`                | AudioServer is rebooting                                                                          |
+| `dialog_event`                | Server requests a user dialog (e.g. error popup)                                                  |
+| `hw_event`                    | Hardware state changed                                                                            |
+
+### How the official App connects to the AudioServer
+
+Extracted from the official Loxone App for Windows, version 17.1.2 (see [Sources](#sources)).
+
+The App opens a **WebSocket with subprotocol `remotecontrol`** directly to the AudioServer.
+The target URL is chosen in this order:
+
+1. **Local, TLS (P2P):** `wss://{ip-with-dashes}.{audioserver-mac}.dyndns.loxonecloud.com:7091/` —
+   Loxone's DNS trick to get a valid certificate on the LAN (the cloud DNS resolves back to the local IP).
+   May fail in networks with DNS-rebind protection; the App then retries without TLS.
+2. **Local, plain:** `ws://{audioserver-host}:7091`
+3. **Fallback / remote:** through the MiniServer acting as a proxy:
+   `ws(s)://{miniserver}/proxy/{uuidAction-of-the-AudioServer-control}/`
+   (used on every 3rd connection attempt, or when the AudioServer is unreachable from another subnet)
+
+**Authentication handshake** (after the server greeting):
+
+1. `audio/cfg/getkey` → returns the AudioServer's RSA public key
+2. `secure/authenticate/{user}/{RSA(aesKey:iv:sessionToken)}/{AES(miniserver-JWT)}` —
+   the App re-uses its MiniServer JWT to authenticate against the AudioServer
+
+### AudioServer feature gates (firmware versions)
+
+The App enables features based on the firmware/API version announced in the WebSocket greeting
+(all gates below require API `1.6`):
+
+| App feature gate           | Min. firmware | Unlocks                                                              |
+| -------------------------- | ------------- | -------------------------------------------------------------------- |
+| `RecentlyPlayed`           | `15.3.12.19`  | `audio/{zoneId}/recent` history                                       |
+| `SpotifySoundsuitNewLogin` | `15.3.11.20`  | New service-login flow for Spotify / SoundSuit                        |
+| `PlayWithEnforcedUser`     | `15.5.01.13`  | `?q&{base64url("enforceUser=true")}` suffix on play commands          |
+| `ShuffleSwitch`            | `16.1.09.23`  | Shuffle toggle in zone state                                          |
+| `AuthenticatedCustomUrls`  | `17.0.0.0`    | Basic-auth suffix on `audio/cfg/radios/modify`                        |
+| `LoxoneRadio`              | `17.0.0.0`    | **Loxone Radio** service (`getservicefolder/loxoneradio/noUser/start`) |
+| `LoudnessSwitch`           | `18.1.0.0`    | `audio/{zoneId}/loudness` get/set                                     |
+
+**Known service IDs** (used with `getservicefolder`, `serviceplay`, `search`, …):
+`local`, `lms`, `radio` (TuneIn), `custom_stream`, `spotify`, `soundsuit`, `loxoneradio` (Loxone Radio).
 
 ---
 
@@ -299,3 +350,4 @@ api-docs/
 | `https://github.com/lox-audioserver/lox-audioserver/src/adapters/http/adminApi/adminApiHandler.ts`        | Admin API routes                                              |
 | `https://github.com/lox-audioserver/lox-audioserver/src/adapters/http/streams/`                           | Audio stream and proxy endpoints                              |
 | `https://github.com/lox-audioserver/lox-audioserver/src/adapters/http/lineInApi/`                         | Line-In bridge API                                            |
+| Loxone App for Windows, Version 17.1.2 (17482) — `http://updatefiles.loxone.com/windows/Beta/171217482.exe` | Official App command extraction (`audio/…` commands, connection & auth flow, feature gates, WebSocket events, Loxone Radio) |
