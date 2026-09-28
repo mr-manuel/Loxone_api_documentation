@@ -84,6 +84,16 @@ info:
     | `globalsearch_result` | Global search result ready |
     | `audio_sync_event` | Player sync group changed |
     | `lineinchanged_event` | Line-in inputs changed |
+    | `playlistchanged_event` | Playlist contents changed |
+    | `reloadmusicapp_event` | Client should reload data — payload `{action, cause, needsToReload, user}`; `cause` names the service (e.g. `spotify`), `user` is the affected account or `none` |
+    | `service_changed_event` | Configured streaming services changed |
+    | `customurl_changed_event` | Custom radio streams changed |
+    | `mastervolumechanged_event` | Amplifier master volume changed |
+    | `usbchanged_event` | USB storage attached / removed |
+    | `restart_event` | AudioServer is restarting |
+    | `reboot_event` | AudioServer is rebooting |
+    | `dialog_event` | Server requests a user dialog (e.g. error popup) |
+    | `hw_event` | Hardware state changed |
 
   version: "1.0.0"
   contact:
@@ -315,17 +325,21 @@ paths:
   /audio/{zoneId}/volume/{value}:
     get:
       tags: [Zone Playback]
-      summary: Set volume
+      summary: Set volume (absolute or relative)
+      description: |
+        Sets the zone volume. `value` is either an **absolute** level (`0`–`100`)
+        or a **relative** step prefixed with `+` or `-` (e.g. `volume/+5`,
+        `volume/-5`). The official App uses the relative form for its
+        volume-step buttons.
       parameters:
         - $ref: '#/components/parameters/zoneId'
         - name: value
           in: path
           required: true
           schema:
-            type: integer
-            minimum: 0
-            maximum: 100
-          description: Volume level (0–100)
+            type: string
+            example: "+5"
+          description: "Absolute volume level (0–100) or relative step (`+{n}` / `-{n}`)"
       responses:
         "200":
           description: OK
@@ -418,6 +432,47 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommandResponse'
 
+  /audio/{zoneId}/loudness:
+    get:
+      tags: [Zone Playback]
+      summary: Get loudness state
+      description: |
+        Returns whether loudness compensation is active for the zone.
+        Requires AudioServer firmware ≥ **18.1.0.0** (App feature gate `LoudnessSwitch`).
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+      responses:
+        "200":
+          description: Loudness state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/loudness/{value}:
+    get:
+      tags: [Zone Playback]
+      summary: Enable / disable loudness
+      description: |
+        Switches loudness compensation for the zone on or off.
+        Requires AudioServer firmware ≥ **18.1.0.0** (App feature gate `LoudnessSwitch`).
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: value
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: "1 = on, 0 = off"
+      responses:
+        "200":
+          description: Loudness set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
   /audio/{zoneId}/queueplus:
     get:
       tags: [Zone Queue]
@@ -446,12 +501,130 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommandResponse'
 
+  /audio/{zoneId}/queueadd/{itemId}:
+    get:
+      tags: [Zone Queue]
+      summary: Append item to end of queue
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded audio path / item ID to append
+      responses:
+        "200":
+          description: Item appended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/queueinsert/{itemId}:
+    get:
+      tags: [Zone Queue]
+      summary: Insert item after current track
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded audio path / item ID to insert
+      responses:
+        "200":
+          description: Item inserted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/queue/play/{queueItemId}:
+    get:
+      tags: [Zone Queue]
+      summary: Play a specific queue item
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: queueItemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique ID of the queue item (from `getqueue`)
+      responses:
+        "200":
+          description: Playback jumped to item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/queue/remove/{queueItemId}:
+    get:
+      tags: [Zone Queue]
+      summary: Remove a queue item
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: queueItemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique ID of the queue item (from `getqueue`)
+      responses:
+        "200":
+          description: Item removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/{zoneId}/queue/move/{queueItemId}/before/{targetItemId}:
+    get:
+      tags: [Zone Queue]
+      summary: Move a queue item
+      description: Moves a queue item so it is placed **before** the given target item.
+      parameters:
+        - $ref: '#/components/parameters/zoneId'
+        - name: queueItemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique ID of the queue item to move
+        - name: targetItemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique ID of the queue item to move it before
+      responses:
+        "200":
+          description: Item moved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
   # ─── Zone Content ───────────────────────────────────────────────────────────
 
   /audio/{zoneId}/serviceplay/{service}/{user}/{audiopath}:
     get:
       tags: [Zone Content]
       summary: Play content from a streaming service
+      description: |
+        Known service IDs used by the official App: `spotify`, `radio` (TuneIn),
+        `custom_stream`, `soundsuit`, `loxoneradio` (Loxone Radio, firmware ≥ 17.0.0.0;
+        user is always `noUser`), `local`, `lms`.
+
+        Optional trailing path segments (appended by the App):
+        - `parentid/{id}/{idx}` or `parentpath/{path}/{idx}` — playback context so
+          the whole parent container continues after the item (**Spotify only**)
+        - `noshuffle` — see dedicated route below
+        - `?q&{base64url("enforceUser=true")}` — forces the given service account
+          (firmware ≥ 15.5.01.13, App feature gate `PlayWithEnforcedUser`)
       parameters:
         - $ref: '#/components/parameters/zoneId'
         - name: service
@@ -460,7 +633,7 @@ paths:
           schema:
             type: string
             example: spotify
-          description: Service name (e.g. `spotify`, `tunein`, `soundsuit`)
+          description: Service name (e.g. `spotify`, `radio`, `soundsuit`, `loxoneradio`)
         - name: user
           in: path
           required: true
@@ -607,6 +780,12 @@ paths:
     get:
       tags: [Zone Content]
       summary: Play a room favorite
+      description: |
+        Optional trailing path segments (appended by the App):
+        - `{username}` — service account to play the favorite with
+        - `noshuffle` — start without shuffle
+        - `?q&{base64url("enforceUser=true")}` — forces the given service account
+          (firmware ≥ 15.5.01.13, App feature gate `PlayWithEnforcedUser`)
       parameters:
         - $ref: '#/components/parameters/zoneId'
         - name: favoriteId
@@ -807,6 +986,11 @@ paths:
     get:
       tags: [Config – Radio]
       summary: Modify a custom radio station
+      description: |
+        Full form used by the App: `audio/cfg/radios/modify/{id}/{name}/{url}`.
+        For streams that require HTTP basic auth the App appends
+        `/?q&{base64url("user:pass")}` (firmware ≥ 17.0.0.0, App feature gate
+        `AuthenticatedCustomUrls`).
       responses:
         "200":
           description: Station modified
@@ -920,6 +1104,22 @@ paths:
     get:
       tags: [Config – Playlists]
       summary: Update playlist items (add / remove / reorder)
+      description: |
+        Playlist editing is a **session protocol**. All operations share the form
+        `audio/cfg/playlist/update/{service}/{user}/{playlistId}/{operation}`:
+
+        | Operation | Effect |
+        |-----------|--------|
+        | `start` | Open an edit session (locks the playlist) |
+        | `additem:{itemId}` | Add a single item (audio path) |
+        | `addbrowsable:{contentId}` | Add all items of a browsable container |
+        | `moveById/{itemId}/before/{targetItemId}` | Reorder — move item before target (`end` = move to end) |
+        | `removeById/{itemId}` | Remove an item |
+        | `finish` | Close the session and save changes |
+        | `finishnochanges` | Close the session and discard changes |
+
+        A conflicting edit by another client ends the session with cause
+        `conflict` (see `playlistchanged_event`).
       responses:
         "200":
           description: Playlist updated
@@ -960,10 +1160,45 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommandResponse'
 
+  /audio/cfg/getroomfavs/{playerId}/{offset}/{limit}:
+    get:
+      tags: [Config – Favorites]
+      summary: Get room favorites for a zone (paginated)
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: offset
+          in: path
+          required: true
+          schema:
+            type: integer
+            default: 0
+          description: Zero-based start index
+        - name: limit
+          in: path
+          required: true
+          schema:
+            type: integer
+            default: 50
+          description: Maximum number of items to return
+      responses:
+        "200":
+          description: Room favorites page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
   /audio/cfg/roomfavs:
     get:
       tags: [Config – Favorites]
       summary: Add / delete / reorder / modify room favorites
+      description: |
+        Base command for room favorite management — see the parameterised
+        sub-routes below for the concrete operations used by the App.
       responses:
         "200":
           description: OK
@@ -972,23 +1207,195 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommandResponse'
 
-  /audio/cfg/roomfavs/{playerId}/copy/{sourcePlayerId}:
+  /audio/cfg/roomfavs/{playerId}/add/{name}/{audiopath}:
     get:
       tags: [Config – Favorites]
-      summary: Copy favorites from one zone to another
+      summary: Add a room favorite
       parameters:
         - name: playerId
           in: path
           required: true
           schema:
             type: integer
-          description: Target zone ID
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded display name
+        - name: audiopath
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded audio path of the content
+      responses:
+        "200":
+          description: Favorite added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs/{playerId}/delete/{itemId}:
+    get:
+      tags: [Config – Favorites]
+      summary: Delete a room favorite
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID of the favorite item
+      responses:
+        "200":
+          description: Favorite deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs/{playerId}/reorder/{itemIds}:
+    get:
+      tags: [Config – Favorites]
+      summary: Reorder room favorites
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemIds
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "3,1,2"
+          description: Comma-separated favorite item IDs in the new order
+      responses:
+        "200":
+          description: Favorites reordered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs/{playerId}/setname/{itemId}/{name}:
+    get:
+      tags: [Config – Favorites]
+      summary: Rename a room favorite
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded new display name
+      responses:
+        "200":
+          description: Favorite renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs/{playerId}/setid/{currentId}/{newId}:
+    get:
+      tags: [Config – Favorites]
+      summary: Change the slot ID of a room favorite
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: currentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: newId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Slot ID changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs/{playerId}/setplus/{itemId}/{enabled}:
+    get:
+      tags: [Config – Favorites]
+      summary: Enable / disable a favorite for Touch (T5) rotation
+      description: |
+        Controls whether the favorite takes part in the `roomfav/plus`
+        rotation triggered by Loxone Touch (T5) buttons.
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: enabled
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+      responses:
+        "200":
+          description: T5 flag updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/roomfavs/{sourcePlayerId}/copy/{targetPlayerIds}:
+    get:
+      tags: [Config – Favorites]
+      summary: Copy favorites from one zone to other zones
+      description: |
+        The official App sends the **source** zone first and supports multiple
+        comma-separated **target** zones, e.g. `audio/cfg/roomfavs/1/copy/2,3`.
+      parameters:
         - name: sourcePlayerId
           in: path
           required: true
           schema:
             type: integer
           description: Source zone ID
+        - name: targetPlayerIds
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "2,3"
+          description: Comma-separated target zone IDs
       responses:
         "200":
           description: Favorites copied
@@ -1111,12 +1518,23 @@ paths:
     get:
       tags: [Config – Services]
       summary: Browse service content folder
+      description: |
+        Known service IDs used by the official App: `spotify`, `radio` (TuneIn),
+        `custom_stream`, `soundsuit`, `local`, `lms`, and `loxoneradio`.
+
+        **Loxone Radio** (firmware ≥ 17.0.0.0, App feature gate `LoxoneRadio`):
+        the App fetches the curated station list with
+        `audio/cfg/getservicefolder/loxoneradio/noUser/start/0/50` —
+        user is always `noUser`, the root folder is named `start`.
+        Returned items carry audio paths starting with `loxoneradio:` and are
+        played via `serviceplay`.
       parameters:
         - name: service
           in: path
           required: true
           schema:
             type: string
+            example: loxoneradio
         - name: user
           in: path
           required: true
@@ -1383,6 +1801,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommandResponse'
 
+  /audio/cfg/geteq/{playerId}:
+    get:
+      tags: [Config – Equalizer]
+      summary: Get equalizer settings for a zone
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: EQ settings for the zone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
   /audio/cfg/seteq:
     get:
       tags: [Config – Equalizer]
@@ -1390,6 +1826,31 @@ paths:
       responses:
         "200":
           description: EQ updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/seteq/{playerId}/{bands}:
+    get:
+      tags: [Config – Equalizer]
+      summary: Set all equalizer bands for a zone
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: bands
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "0,0,2,4,0,0,-2,0,0,0"
+          description: Comma-separated gain values for all EQ bands
+      responses:
+        "200":
+          description: EQ updated for the zone
           content:
             application/json:
               schema:
@@ -1532,6 +1993,11 @@ paths:
     get:
       tags: [Config – Search]
       summary: Trigger global search (result delivered via WebSocket)
+      description: |
+        Full form used by the App:
+        `audio/cfg/globalsearch/{scopes}/{query}` where `{scopes}` describes the
+        services and categories to search with a per-scope result limit and
+        `{query}` is the URL-encoded search term.
       responses:
         "200":
           description: Search triggered; result comes via `globalsearch_result` WebSocket event
@@ -1697,6 +2163,10 @@ paths:
     get:
       tags: [Config – Info]
       summary: Update dynamic player groups
+      description: |
+        Full form used by the App: `audio/cfg/dgroup/update/{groupId}/{playerIds}`
+        with `{playerIds}` as comma-separated list (e.g.
+        `audio/cfg/dgroup/update/abc123/1,2,3`).
       responses:
         "200":
           description: OK
@@ -1771,6 +2241,11 @@ paths:
     get:
       tags: [Config – Info]
       summary: Select line-in input for a zone
+      description: |
+        **Note:** the official App selects a line-in for playback via
+        `audio/{zoneId}/linein/{inputId}` (see *Zone Content*). It uses
+        `audio/cfg/input/…` only for input **configuration** — see the
+        `rename` / `type` sub-routes below.
       parameters:
         - name: playerId
           in: path
@@ -1785,6 +2260,56 @@ paths:
       responses:
         "200":
           description: Input selected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/input/{inputId}/rename/{name}:
+    get:
+      tags: [Config – Info]
+      summary: Rename a line-in input
+      parameters:
+        - name: inputId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Input identifier (from `getinputs`)
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded new display name
+      responses:
+        "200":
+          description: Input renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+
+  /audio/cfg/input/{inputId}/type/{iconType}:
+    get:
+      tags: [Config – Info]
+      summary: Set the icon type of a line-in input
+      parameters:
+        - name: inputId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Input identifier (from `getinputs`)
+        - name: iconType
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Icon / device type index
+      responses:
+        "200":
+          description: Input type updated
           content:
             application/json:
               schema:
